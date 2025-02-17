@@ -3,13 +3,26 @@ defmodule AshPostgres.MigrationGenerator.Phase do
 
   defmodule Create do
     @moduledoc false
-    defstruct [:table, :schema, :multitenancy, partitioning: nil, operations: [], commented?: false]
+    defstruct [
+      :table,
+      :schema,
+      :multitenancy,
+      partitioning: nil,
+      operations: [],
+      commented?: false
+    ]
 
     import AshPostgres.MigrationGenerator.Operation.Helper, only: [as_atom: 1]
 
-    def up(%{schema: schema, table: table, operations: operations, multitenancy: multitenancy, partitioning: partitioning}) do
+    def up(%{
+          schema: schema,
+          table: table,
+          operations: operations,
+          multitenancy: multitenancy,
+          partitioning: partitioning
+        }) do
       if multitenancy.strategy == :context do
-        arguments = arguments([prefix("prefix()"), options(partitioning: partitioning)])
+        arguments = arguments([prefix(true), options(partitioning: partitioning)])
 
         "create table(:#{as_atom(table)}, primary_key: false#{arguments}) do\n" <>
           Enum.map_join(operations, "\n", fn operation -> operation.__struct__.up(operation) end) <>
@@ -38,14 +51,15 @@ defmodule AshPostgres.MigrationGenerator.Phase do
       end
     end
 
-    def arguments(["",""]), do: ""
+    def arguments([nil, nil]), do: ""
     def arguments(arguments), do: ", " <> Enum.join(Enum.reject(arguments, &is_nil(&1)), ",")
 
-    def prefix(nil), do: nil
-    def prefix(schema), do: "prefix: #{schema}"
+    def prefix(true), do: "prefix: prefix()"
+    def prefix(schema) when is_binary(schema) and schema != "", do: "prefix: \"#{schema}\""
+    def prefix(_), do: nil
 
     def options(_options, _acc \\ [])
-    def options([], []), do: ""
+    def options([], []), do: nil
     def options([], acc), do: "options: \"#{Enum.join(acc, " ")}\""
 
     def options([{:partitioning, %{method: method, attribute: attribute}} | rest], acc) do
@@ -55,7 +69,7 @@ defmodule AshPostgres.MigrationGenerator.Phase do
       |> options(acc ++ [option])
     end
 
-    def options([_| rest], acc) do
+    def options([_ | rest], acc) do
       options(rest, acc)
     end
   end
