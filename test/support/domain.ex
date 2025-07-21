@@ -4,7 +4,11 @@ defmodule AshPostgres.Test.Domain do
 
   resources do
     resource(AshPostgres.Test.CoAuthorPost)
-    resource(AshPostgres.Test.Post)
+
+    resource(AshPostgres.Test.Post) do
+      define(:review, action: :review)
+    end
+
     resource(AshPostgres.Test.Comedian)
     resource(AshPostgres.Test.Comment)
     resource(AshPostgres.Test.CommentLink)
@@ -27,12 +31,18 @@ defmodule AshPostgres.Test.Domain do
     resource(AshPostgres.Test.Entity)
     resource(AshPostgres.Test.ContentVisibilityGroup)
     resource(AshPostgres.Test.TempEntity)
+    resource(AshPostgres.Test.RecordTempEntity)
     resource(AshPostgres.Test.Permalink)
     resource(AshPostgres.Test.Record)
     resource(AshPostgres.Test.PostFollower)
     resource(AshPostgres.Test.StatefulPostFollower)
     resource(AshPostgres.Test.PostWithEmptyUpdate)
     resource(AshPostgres.Test.PartitionedPost)
+    resource(AshPostgres.Test.DbPoint)
+    resource(AshPostgres.Test.DbStringPoint)
+    resource(AshPostgres.Test.CSV)
+    resource(AshPostgres.Test.StandupClub)
+    resource(AshPostgres.Test.Punchline)
   end
 
   authorization do

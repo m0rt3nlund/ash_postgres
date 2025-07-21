@@ -16,6 +16,41 @@ defmodule AshSql.AggregateTest do
     Organization |> Ash.read!(load: [:no_cast_open_posts_count])
   end
 
+  test "count aggregate on resource with no primary key with no field specified" do
+    assert Ash.count!(AshPostgres.Test.PostView) == 0
+  end
+
+  test "can sum count aggregates" do
+    org =
+      Organization
+      |> Ash.Changeset.for_create(:create, %{name: "The Org"})
+      |> Ash.create!()
+
+    post =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "title"})
+      |> Ash.Changeset.manage_relationship(:organization, org, type: :append_and_remove)
+      |> Ash.create!()
+
+    Comment
+    |> Ash.Changeset.for_create(:create, %{title: "match"})
+    |> Ash.Changeset.manage_relationship(:post, post, type: :append_and_remove)
+    |> Ash.create!()
+
+    post =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "title"})
+      |> Ash.Changeset.manage_relationship(:organization, org, type: :append_and_remove)
+      |> Ash.create!()
+
+    Comment
+    |> Ash.Changeset.for_create(:create, %{title: "match"})
+    |> Ash.Changeset.manage_relationship(:post, post, type: :append_and_remove)
+    |> Ash.create!()
+
+    assert Decimal.eq?(Ash.sum!(Post, :count_of_comments), Decimal.new("2"))
+  end
+
   test "relates to actor via has_many and with an aggregate" do
     org =
       Organization
@@ -59,6 +94,95 @@ defmodule AshSql.AggregateTest do
       |> Ash.load!(:count_of_comments, actor: user)
 
     assert read_post.count_of_comments == 1
+  end
+
+  test "nested filters on aggregates works" do
+    org =
+      Organization
+      |> Ash.Changeset.for_create(:create, %{name: "match"})
+      |> Ash.create!()
+
+    post =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "match"})
+      |> Ash.Changeset.manage_relationship(:organization, org, type: :append_and_remove)
+      |> Ash.create!()
+
+    post2 =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "match"})
+      |> Ash.create!()
+
+    Comment
+    |> Ash.Changeset.for_create(:create, %{title: "match"})
+    |> Ash.Changeset.manage_relationship(:post, post2, type: :append_and_remove)
+    |> Ash.create!()
+
+    assert [%{count_of_comments_matching_org_name: 1}] =
+             Post
+             |> Ash.Query.load(:count_of_comments_matching_org_name)
+             |> Ash.Query.filter(id == ^post.id)
+             |> Ash.read!()
+  end
+
+  describe "Context Multitenancy" do
+    alias AshPostgres.MultitenancyTest.{Org, Post, User}
+
+    test "aggregating with a filter on an aggregate honors the tenant" do
+      org =
+        Org
+        |> Ash.Changeset.for_create(:create, %{name: "BTTF"})
+        |> Ash.create!()
+
+      user =
+        User
+        |> Ash.Changeset.for_create(:create, %{name: "Marty", org_id: org.id})
+        |> Ash.create!()
+
+      ["Back to 1955", "Forwards to 1985", "Forward to 2015", "Back again to 1985"]
+      |> Enum.map(
+        &(Post
+          |> Ash.Changeset.for_create(:create, %{name: &1, user_id: user.id})
+          |> Ash.create!(tenant: "org_#{org.id}", load: [:last_word]))
+      )
+
+      assert 1 ==
+               User
+               |> Ash.Query.set_tenant("org_#{org.id}")
+               |> Ash.Query.filter(count_visited > 1)
+               |> Ash.Query.load(:count_visited)
+               |> Ash.count!()
+    end
+
+    test "loading a nested aggregate honors tenant" do
+      alias AshPostgres.MultitenancyTest.{Org, Post, User}
+
+      org =
+        Org
+        |> Ash.Changeset.for_create(:create, %{name: "BTTF"})
+        |> Ash.create!()
+
+      user =
+        User
+        |> Ash.Changeset.for_create(:create, %{name: "Marty", org_id: org.id})
+        |> Ash.create!()
+
+      ["Back to 1955", "Forwards to 1985", "Forward to 2015", "Back again to 1985"]
+      |> Enum.map(
+        &(Post
+          |> Ash.Changeset.for_create(:create, %{name: &1, user_id: user.id})
+          |> Ash.create!(tenant: "org_#{org.id}", load: [:last_word]))
+      )
+
+      assert Ash.load!(user, :count_visited, tenant: "org_#{org.id}")
+             |> then(& &1.count_visited) == 4
+
+      assert Ash.load!(org, :total_posts, tenant: "org_#{org.id}")
+             |> then(& &1.total_posts) == 0
+
+      assert Ash.load!(org, :total_users_posts, tenant: "org_#{org.id}")
+             |> then(& &1.total_users_posts) == 4
+    end
   end
 
   describe "join filters" do
@@ -833,6 +957,16 @@ defmodule AshSql.AggregateTest do
 
     assert %{sum_of_popular_comment_rating_scores_2: 80} =
              values
+
+    values =
+      post
+      |> Ash.load!([
+        :sum_of_odd_comment_rating_scores
+      ])
+      |> Map.take([:sum_of_odd_comment_rating_scores])
+
+    assert %{sum_of_odd_comment_rating_scores: 120} =
+             values
   end
 
   test "can't define multidimensional array aggregate types" do
@@ -899,6 +1033,28 @@ defmodule AshSql.AggregateTest do
              Comment
              |> Ash.Query.filter(post.count_of_comments == 1)
              |> Ash.read_one!()
+  end
+
+  @tag :regression
+  test "aggregates with parent expressions in their filters are not grouped" do
+    post =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "title"})
+      |> Ash.create!()
+
+    Comment
+    |> Ash.Changeset.for_create(:create, %{title: "title"})
+    |> Ash.Changeset.manage_relationship(:post, post, type: :append_and_remove)
+    |> Ash.create!()
+
+    Comment
+    |> Ash.Changeset.for_create(:create, %{title: "something else"})
+    |> Ash.Changeset.manage_relationship(:post, post, type: :append_and_remove)
+    |> Ash.create!()
+
+    assert %{count_of_comments: 2, count_of_comments_with_same_name: 1} =
+             post
+             |> Ash.load!([:count_of_comments, :count_of_comments_with_same_name])
   end
 
   describe "sum" do
@@ -1454,5 +1610,61 @@ defmodule AshSql.AggregateTest do
                ])
                |> Ash.read_one!()
     end
+  end
+
+  @tag :regression
+  test "filter and aggregate names do not collide with the same names" do
+    club = Ash.Seed.seed!(AshPostgres.Test.StandupClub, %{name: "Studio 54"})
+
+    club_comedians =
+      Enum.map([1, 2, 3], fn idx ->
+        Ash.Seed.seed!(AshPostgres.Test.Comedian, %{
+          name: "Bill Burr-#{idx}",
+          standup_club_id: club.id
+        })
+      end)
+
+    Enum.each(club_comedians, fn comedian ->
+      Range.new(1, Enum.random([2, 3, 4, 5, 6]))
+      |> Enum.each(fn joke_idx ->
+        joke =
+          Ash.Seed.seed!(AshPostgres.Test.Joke, %{
+            comedian_id: comedian.id,
+            text: "Haha I am a joke number #{joke_idx}"
+          })
+
+        Range.new(1, Enum.random([2, 3, 4, 5, 6]))
+        |> Enum.each(fn _idx ->
+          Ash.Seed.seed!(AshPostgres.Test.Punchline, %{joke_id: joke.id})
+        end)
+      end)
+    end)
+
+    Range.new(1, Enum.random([2, 3, 4, 5, 6]))
+    |> Enum.each(fn joke_idx ->
+      joke =
+        Ash.Seed.seed!(AshPostgres.Test.Joke, %{
+          standup_club_id: club.id,
+          text: "Haha I am a club joke number #{joke_idx}"
+        })
+
+      Range.new(1, Enum.random([2, 3, 4, 5, 6]))
+      |> Enum.each(fn _idx ->
+        Ash.Seed.seed!(AshPostgres.Test.Punchline, %{joke_id: joke.id})
+      end)
+    end)
+
+    filter = %{
+      comedians: %{
+        jokes: %{
+          punchline_count: %{
+            greater_than: 0
+          }
+        }
+      }
+    }
+
+    Ash.Query.filter_input(AshPostgres.Test.StandupClub, filter)
+    |> Ash.read!(load: [:punchline_count])
   end
 end

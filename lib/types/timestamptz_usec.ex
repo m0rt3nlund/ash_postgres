@@ -21,8 +21,6 @@ defmodule AshPostgres.TimestamptzUsec do
   timestamps type: :timestamptz_usec
   ```
 
-      
-
   Please see `AshPostgres.Timestamptz` for details about the usecase for this type.
   """
   use Ash.Type.NewType, subtype_of: :datetime, constraints: [precision: :microsecond]

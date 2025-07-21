@@ -35,7 +35,11 @@ defmodule AshPostgres.Test.Author do
   actions do
     default_accept(:*)
 
-    defaults([:create, :read, :update, :destroy])
+    defaults([:create, :read, :destroy])
+
+    update :update do
+      primary?(true)
+    end
   end
 
   relationships do
@@ -171,6 +175,8 @@ defmodule AshPostgres.Test.Author do
 
     calculate(:has_posts, :boolean, expr(exists(posts, true == true)))
     calculate(:has_no_posts, :boolean, expr(has_posts == false))
+
+    calculate(:profile_description_calc, :string, expr(profile.description), allow_nil?: true)
   end
 
   aggregates do

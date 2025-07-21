@@ -1,5 +1,5 @@
 defmodule AshPostgres.ReferencesTest do
-  use ExUnit.Case
+  use AshPostgres.RepoCase
 
   test "can't use match_type != :full when referencing an non-primary key index" do
     Code.compiler_options(ignore_module_conflict: true)
@@ -104,5 +104,28 @@ defmodule AshPostgres.ReferencesTest do
         end
       end
     end
+  end
+
+  test "named reference results in properly applied foreign_key_constraint/3 on the underlying changeset" do
+    # Create a comment with an invalid post_id
+    assert {:error, %Ash.Error.Invalid{errors: errors}} =
+             AshPostgres.Test.Comment
+             |> Ash.Changeset.for_create(:create, %{
+               title: "Test Comment",
+               # This post doesn't exist
+               post_id: Ash.UUID.generate()
+             })
+             |> Ash.create()
+
+    assert [
+             %Ash.Error.Changes.InvalidAttribute{
+               field: :post_id,
+               message: "does not exist",
+               private_vars: private_vars
+             }
+           ] = errors
+
+    assert Keyword.get(private_vars, :constraint) == "special_name_fkey"
+    assert Keyword.get(private_vars, :constraint_type) == :foreign_key
   end
 end

@@ -14,11 +14,17 @@ defmodule AshPostgres.Test.Joke do
   end
 
   relationships do
+    belongs_to(:standup_club, AshPostgres.Test.StandupClub, public?: true)
     belongs_to(:comedian, AshPostgres.Test.Comedian, public?: true)
+    has_many(:punchlines, AshPostgres.Test.Punchline, public?: true)
   end
 
   actions do
     defaults([:read])
+  end
+
+  aggregates do
+    count(:punchline_count, :punchlines, public?: true)
   end
 
   postgres do

@@ -30,8 +30,9 @@ defmodule Mix.Tasks.AshPostgres.Rollback do
       mix ash_postgres.rollback --to 20080906120000
 
   ## Command line options
-    * `--domains` - the domains who's repos should be rolledback
+    * `--domains` - the domains whose repos should be rolled back
     * `--all` - revert all applied migrations
+    * `--repo`, `-r` - the repo to rollback
     * `--step` / `-n` - revert n number of applied migrations
     * `--to` / `-v` - revert all migrations down to and including version
     * `--quiet` - do not log migration commands
@@ -59,9 +60,11 @@ defmodule Mix.Tasks.AshPostgres.Rollback do
           log_migrations_sql: :boolean,
           log_migrator_sql: :boolean,
           only_tenants: :string,
-          except_tenants: :string
+          except_tenants: :string,
+          already_started: :boolean,
+          repo: :string
         ],
-        aliases: [n: :step, v: :to]
+        aliases: [n: :step, v: :to, r: :repo]
       )
 
     repos = AshPostgres.Mix.Helpers.repos!(opts, args)
@@ -74,25 +77,23 @@ defmodule Mix.Tasks.AshPostgres.Rollback do
       |> AshPostgres.Mix.Helpers.delete_flag("--only-tenants")
       |> AshPostgres.Mix.Helpers.delete_flag("--except-tenants")
       |> AshPostgres.Mix.Helpers.delete_arg("-r")
+      |> AshPostgres.Mix.Helpers.delete_arg("--already-started")
 
     Mix.Task.reenable("ecto.rollback")
 
     if opts[:tenants] do
       for repo <- repos do
-        Ecto.Migrator.with_repo(repo, fn repo ->
-          for tenant <- tenants(repo, opts) do
-            rest_opts = AshPostgres.Mix.Helpers.delete_arg(rest_opts, "--prefix")
+        for tenant <- tenants(repo, opts) do
+          Mix.Task.reenable("ecto.rollback")
+          rest_opts = AshPostgres.Mix.Helpers.delete_arg(rest_opts, "--prefix")
 
-            Mix.Task.run(
-              "ecto.rollback",
-              ["-r", to_string(repo)] ++
-                rest_opts ++
-                ["--prefix", tenant, "--migrations-path", tenant_migrations_path(opts, repo)]
-            )
-
-            Mix.Task.reenable("ecto.rollback")
-          end
-        end)
+          Mix.Task.run(
+            "ecto.rollback",
+            ["-r", to_string(repo)] ++
+              rest_opts ++
+              ["--prefix", tenant, "--migrations-path", tenant_migrations_path(opts, repo)]
+          )
+        end
       end
     else
       for repo <- repos do

@@ -5,6 +5,366 @@ See [Conventional Commits](https://www.conventionalcommits.org) for commit guide
 
 <!-- changelog -->
 
+## [v2.6.10](https://github.com/ash-project/ash_postgres/compare/v2.6.9...v2.6.10) (2025-07-09)
+
+
+
+
+### Bug Fixes:
+
+* properly return the type when configured by Zach Daniel
+
+* retain sort when upgrading to a subquery by Zach Daniel
+
+## [v2.6.9](https://github.com/ash-project/ash_postgres/compare/v2.6.8...v2.6.9) (2025-06-25)
+
+
+
+
+### Bug Fixes:
+
+* smallserial not mapping to proper type (#574) by Marc Planelles
+
+* Fix foreign key constraint on specially named references (#572) by olivermt
+
+## [v2.6.8](https://github.com/ash-project/ash_postgres/compare/v2.6.7...v2.6.8) (2025-06-18)
+
+
+
+
+### Bug Fixes:
+
+* ensure prefix is set even with create_schemas_in_migrations? false by Zach Daniel
+
+## [v2.6.7](https://github.com/ash-project/ash_postgres/compare/v2.6.6...v2.6.7) (2025-06-13)
+
+
+
+
+### Bug Fixes:
+
+* double select error (#569) by Barnabas Jovanovics
+
+## [v2.6.6](https://github.com/ash-project/ash_postgres/compare/v2.6.5...v2.6.6) (2025-06-10)
+
+
+
+
+### Bug Fixes:
+
+* simply storage of size/scale/precision information
+
+## [v2.6.5](https://github.com/ash-project/ash_postgres/compare/v2.6.4...v2.6.5) (2025-06-10)
+
+
+
+
+### Bug Fixes:
+
+* remove spurios debug logging
+
+* properly detect nested array decimals
+
+## [v2.6.4](https://github.com/ash-project/ash_postgres/compare/v2.6.3...v2.6.4) (2025-06-09)
+
+
+
+
+### Bug Fixes:
+
+* reenable migrate task
+
+* use `force: true`, not `force?: true` calling mix.generator
+
+* casting integers to string in expressions works as intended (#564)
+
+* use better wrappers around string/ci_string
+
+### Improvements:
+
+* add `c:AshPostgres.Repo.create_schemas_in_migrations?` callback
+
+## [v2.6.3](https://github.com/ash-project/ash_postgres/compare/v2.6.2...v2.6.3) (2025-06-04)
+
+
+
+
+### Bug Fixes:
+
+* undo change for timestamptz usec, retaining precision
+
+## [v2.6.2](https://github.com/ash-project/ash_postgres/compare/v2.6.1...v2.6.2) (2025-06-04)
+
+
+
+
+### Bug Fixes:
+
+* don't use `:"timestamptz(6)"` in ecto storage type
+
+## [v2.6.1](https://github.com/ash-project/ash_postgres/compare/v2.6.0...v2.6.1) (2025-05-30)
+
+
+
+
+### Bug Fixes:
+
+* retain repo as atom in migrator task (#560)
+
+## [v2.6.0](https://github.com/ash-project/ash_postgres/compare/v2.5.22...v2.6.0) (2025-05-30)
+
+
+
+
+### Features:
+
+* --dev flag for codegen (#555)
+
+### Bug Fixes:
+
+* properly encode decimal scale & preicison into snapshots
+
+### Improvements:
+
+* use new `PendingCodegen` error
+
+* assume not renaming when generating dev migrations
+
+* support scale & precision in decimal types
+
+## [v2.5.22](https://github.com/ash-project/ash_postgres/compare/v2.5.21...v2.5.22) (2025-05-22)
+
+
+
+
+### Bug Fixes:
+
+* Convert sensitive patterns from module constant to function for OTP/28 (#552)
+
+## [v2.5.21](https://github.com/ash-project/ash_postgres/compare/v2.5.20...v2.5.21) (2025-05-21)
+
+
+
+
+### Improvements:
+
+* update igniter, remove inflex
+
+## [v2.5.20](https://github.com/ash-project/ash_postgres/compare/v2.5.19...v2.5.20) (2025-05-20)
+
+
+
+
+### Bug Fixes:
+
+* self-join if combination queries require more fields
+
+* enforce tenant name rules at creation (#550)
+
+## [v2.5.19](https://github.com/ash-project/ash_postgres/compare/v2.5.18...v2.5.19) (2025-05-06)
+
+
+
+
+### Improvements:
+
+* support unions (#543)
+
+## [v2.5.18](https://github.com/ash-project/ash_postgres/compare/v2.5.17...v2.5.18) (2025-04-29)
+
+
+
+
+### Bug Fixes:
+
+* fix some issues in migration generator related to tenancy (#539)
+
+* use old multitenancy in generated removals of previous indexes (#536)
+
+* add tenant to ash bindings in update (#534)
+
+* correct order, when renaming attribute with an identity (#533)
+
+## [v2.5.17](https://github.com/ash-project/ash_postgres/compare/v2.5.16...v2.5.17) (2025-04-22)
+
+
+
+
+### Bug Fixes:
+
+* add tenant to ash bindings in update (#534)
+
+* correct order, when renaming attribute with an identity (#533)
+
+## [v2.5.16](https://github.com/ash-project/ash_postgres/compare/v2.5.15...v2.5.16) (2025-04-15)
+
+
+
+
+### Bug Fixes:
+
+* fixes for map types nested in expressions
+
+* use proper migrations path configuration
+
+## [v2.5.15](https://github.com/ash-project/ash_postgres/compare/v2.5.14...v2.5.15) (2025-04-09)
+
+
+
+
+### Bug Fixes:
+
+* ash postgres subquery usage (#524)
+
+* use subqueries for join resources
+
+* use schema when changing reference deferrability (#519)
+
+### Improvements:
+
+* propagate `-r` flag to Ecto (#521)
+
+## [v2.5.14](https://github.com/ash-project/ash_postgres/compare/v2.5.13...v2.5.14) (2025-03-28)
+
+
+
+
+### Bug Fixes:
+
+* remove debugging code accidentally committed
+
+* retain loads on atomic upgrade update actions
+
+### Improvements:
+
+* create schema before table creation (#518)
+
+## [v2.5.13](https://github.com/ash-project/ash_postgres/compare/v2.5.12...v2.5.13) (2025-03-25)
+
+
+
+
+### Bug Fixes:
+
+* order when renaming attribute with an index (#514)
+
+## [v2.5.12](https://github.com/ash-project/ash_postgres/compare/v2.5.11...v2.5.12) (2025-03-18)
+
+
+
+
+### Improvements:
+
+* include error detail in constraint violation errors
+
+## [v2.5.11](https://github.com/ash-project/ash_postgres/compare/v2.5.10...v2.5.11) (2025-03-11)
+
+
+
+
+### Bug Fixes:
+
+* ignore attributes with no known type
+
+* honor skip_unknown option in spec table generator
+
+* honor --no-migrations flag
+
+* allow optional input for relationship name guesser
+
+* put move up/down in the right place
+
+* go to top of if block
+
+* use `configures_key?/3`
+
+* don't modify repo in runtime.exs
+
+* remove Helpdesk.Repo from installer ð¤¦
+
+* only configure repo in installer if not already configured
+
+* install ash if not installed already
+
+### Improvements:
+
+* document options, add `--no-migrations`
+
+* add `skip_unknown` option to `ash_postgres.gen.resources`
+
+## [v2.5.10](https://github.com/ash-project/ash_postgres/compare/v2.5.9...v2.5.10) (2025-03-06)
+
+
+
+
+### Bug Fixes:
+
+* honor skip_tables
+
+### Improvements:
+
+* never import `schema_migrations` table
+
+## [v2.5.9](https://github.com/ash-project/ash_postgres/compare/v2.5.8...v2.5.9) (2025-03-06)
+
+
+
+
+### Bug Fixes:
+
+* match on non-empty repo options
+
+### Improvements:
+
+* add `--public` option to `gen.resources`, default `true`
+
+* add `--default-actions` option to `gen.resources`, default `true`
+
+## [v2.5.8](https://github.com/ash-project/ash_postgres/compare/v2.5.7...v2.5.8) (2025-03-06)
+
+
+
+
+### Bug Fixes:
+
+* handle CLI args better for ash_postgres.gen.resources
+
+* compose check constraints and base filters properly
+
+## [v2.5.7](https://github.com/ash-project/ash_postgres/compare/v2.5.6...v2.5.7) (2025-03-04)
+
+
+
+
+### Bug Fixes:
+
+* handle errors from identities in polymorphic resources properly (#497)
+
+* Use exclusion_constraint instead of check_constraint in add_exclusion_constraints (#495)
+
+* check for stale record errors on destroy
+
+* don't rely on private function from `Ecto.Repo` (#492)
+
+## [v2.5.6](https://github.com/ash-project/ash_postgres/compare/v2.5.5...v2.5.6) (2025-02-25)
+
+
+
+
+### Bug Fixes:
+
+* start lateral join source query bindings at 500
+
+* Ensure primary key migrations use prefix for multitenancy (#488)
+
+* don't rewrite identities when only global? is changed
+
+* don't modify an attribute when it only needs to be renamed
+
+### Improvements:
+
+* support SKIP LOCKED in locks
+
 ## [v2.5.5](https://github.com/ash-project/ash_postgres/compare/v2.5.4...v2.5.5) (2025-02-17)
 
 

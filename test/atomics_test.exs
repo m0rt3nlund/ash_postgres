@@ -3,6 +3,7 @@ defmodule AshPostgres.AtomicsTest do
   alias AshPostgres.Test.Comment
 
   use AshPostgres.RepoCase, async: false
+
   alias AshPostgres.Test.Invite
   alias AshPostgres.Test.Post
   alias AshPostgres.Test.User
@@ -37,6 +38,27 @@ defmodule AshPostgres.AtomicsTest do
              |> Ash.Changeset.for_update(:update, %{})
              |> Ash.Changeset.atomic_update(:price, expr(price + 1))
              |> Ash.update!()
+  end
+
+  test "an atomic update on decimals works" do
+    post =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "foo", decimal: Decimal.new("1")})
+      |> Ash.create!()
+
+    assert %{decimal: result} =
+             post
+             |> Ash.Changeset.for_update(:subtract_integer_from_decimal, %{amount: 2})
+             |> Ash.update!()
+
+    assert Decimal.eq?(result, Decimal.new("-1"))
+
+    assert %{decimal: result} =
+             post
+             |> Ash.Changeset.for_update(:subtract_from_decimal, %{amount: Decimal.new("2")})
+             |> Ash.update!()
+
+    assert Decimal.eq?(result, Decimal.new("-3"))
   end
 
   test "an atomic works on a constrained integer" do
@@ -118,9 +140,11 @@ defmodule AshPostgres.AtomicsTest do
              post
              |> Ash.Changeset.for_update(:update, %{})
              |> Ash.Changeset.atomic_update(%{
-               list_of_stuff: [
-                 %{foo: [%{a: 1, b: %{c: [1, 2, expr(type(fragment("3"), :integer))]}}]}
-               ]
+               list_of_stuff:
+                 {:atomic,
+                  [
+                    %{foo: [%{a: 1, b: %{c: [1, 2, expr(type(fragment("3"), :integer))]}}]}
+                  ]}
              })
              |> Ash.update!()
   end
@@ -365,29 +389,29 @@ defmodule AshPostgres.AtomicsTest do
           |> Ash.update!()
         end
 
-        # assert_raise Ash.Error.Invalid, ~r/Can only update if Post has no comments/, fn ->
-        #   post
-        #   |> Ash.Changeset.new()
-        #   |> Ash.Changeset.put_context(:aggregate, unquote(aggregate))
-        #   |> Ash.Changeset.for_update(:update_if_no_comments_non_atomic, %{title: "bar"})
-        #   |> Ash.update!()
-        # end
+        assert_raise Ash.Error.Invalid, ~r/Can only update if Post has no comments/, fn ->
+          post
+          |> Ash.Changeset.new()
+          |> Ash.Changeset.put_context(:aggregate, unquote(aggregate))
+          |> Ash.Changeset.for_update(:update_if_no_comments_non_atomic, %{title: "bar"})
+          |> Ash.update!()
+        end
 
-        # assert_raise Ash.Error.Invalid, ~r/Can only delete if Post has no comments/, fn ->
-        #   post
-        #   |> Ash.Changeset.new()
-        #   |> Ash.Changeset.put_context(:aggregate, unquote(aggregate))
-        #   |> Ash.Changeset.for_destroy(:destroy_if_no_comments_non_atomic, %{})
-        #   |> Ash.destroy!()
-        # end
+        assert_raise Ash.Error.Invalid, ~r/Can only delete if Post has no comments/, fn ->
+          post
+          |> Ash.Changeset.new()
+          |> Ash.Changeset.put_context(:aggregate, unquote(aggregate))
+          |> Ash.Changeset.for_destroy(:destroy_if_no_comments_non_atomic, %{})
+          |> Ash.destroy!()
+        end
 
-        # assert_raise Ash.Error.Invalid, ~r/Can only delete if Post has no comments/, fn ->
-        #   post
-        #   |> Ash.Changeset.new()
-        #   |> Ash.Changeset.put_context(:aggregate, unquote(aggregate))
-        #   |> Ash.Changeset.for_destroy(:destroy_if_no_comments, %{})
-        #   |> Ash.destroy!()
-        # end
+        assert_raise Ash.Error.Invalid, ~r/Can only delete if Post has no comments/, fn ->
+          post
+          |> Ash.Changeset.new()
+          |> Ash.Changeset.put_context(:aggregate, unquote(aggregate))
+          |> Ash.Changeset.for_destroy(:destroy_if_no_comments, %{})
+          |> Ash.destroy!()
+        end
       end
     end
   )

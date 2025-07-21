@@ -3,8 +3,6 @@ defmodule AshPostgres.MigrationGenerator do
 
   require Logger
 
-  import Mix.Generator
-
   alias AshPostgres.MigrationGenerator.{Operation, Phase}
 
   defstruct snapshot_path: nil,
@@ -19,7 +17,9 @@ defmodule AshPostgres.MigrationGenerator do
             format: true,
             dry_run: false,
             check: false,
+            dev: false,
             snapshots_only: false,
+            auto_name: false,
             dont_drop_columns: false
 
   def generate(domains, opts \\ []) do
@@ -50,12 +50,46 @@ defmodule AshPostgres.MigrationGenerator do
       |> Enum.concat(find_repos())
       |> Enum.uniq()
 
-    Mix.shell().info("\nExtension Migrations: ")
-    create_extension_migrations(repos, opts)
-    Mix.shell().info("\nGenerating Tenant Migrations: ")
-    create_migrations(tenant_snapshots, opts, true, snapshots)
-    Mix.shell().info("\nGenerating Migrations:")
-    create_migrations(snapshots, opts, false)
+    extension_migration_files =
+      create_extension_migrations(repos, opts)
+
+    tenant_migration_files =
+      create_migrations(tenant_snapshots, opts, true, snapshots)
+
+    migration_files =
+      create_migrations(snapshots, opts, false)
+
+    case extension_migration_files ++ tenant_migration_files ++ migration_files do
+      [] ->
+        if !opts.check || opts.dry_run do
+          Mix.shell().info(
+            "No changes detected, so no migrations or snapshots have been created."
+          )
+        end
+
+        :ok
+
+      files ->
+        cond do
+          opts.check ->
+            raise Ash.Error.Framework.PendingCodegen,
+              diff: files
+
+          opts.dry_run ->
+            Mix.shell().info(
+              files
+              |> Enum.sort_by(&elem(&1, 0))
+              |> Enum.map_join("\n\n", fn {file, contents} ->
+                "#{file}\n#{contents}"
+              end)
+            )
+
+          true ->
+            Enum.each(files, fn {file, contents} ->
+              Mix.Generator.create_file(file, contents, force: true)
+            end)
+        end
+    end
   end
 
   defp find_repos do
@@ -223,14 +257,15 @@ defmodule AshPostgres.MigrationGenerator do
         |> Enum.map(fn {_name, extension} -> extension end)
 
       if Enum.empty?(to_install) do
-        Mix.shell().info("No extensions to install")
-        :ok
+        []
       else
+        dev = if opts.dev, do: "_dev"
+
         {module, migration_name} =
           case to_install do
             [{ext_name, version, _up_fn, _down_fn}] ->
               {"install_#{ext_name}_v#{version}_#{timestamp(true)}",
-               "#{timestamp(true)}_install_#{ext_name}_v#{version}_extension"}
+               "#{timestamp(true)}_install_#{ext_name}_v#{version}_extension#{dev}"}
 
             ["ash_functions"] ->
               {"install_ash_functions_extension_#{AshPostgres.MigrationGenerator.AshFunctions.latest_version()}_#{timestamp(true)}",
@@ -238,6 +273,8 @@ defmodule AshPostgres.MigrationGenerator do
 
             _multiple ->
               migration_path = migration_path(opts, repo, false)
+
+              require_name!(opts)
 
               if opts.name do
                 count =
@@ -262,7 +299,7 @@ defmodule AshPostgres.MigrationGenerator do
                   |> Kernel.+(1)
 
                 {"#{opts.name}_extensions_#{count}",
-                 "#{timestamp(true)}_#{opts.name}_extensions_#{count}"}
+                 "#{timestamp(true)}_#{opts.name}_extensions_#{count}#{dev}"}
               else
                 count =
                   migration_path
@@ -286,7 +323,7 @@ defmodule AshPostgres.MigrationGenerator do
                   |> Kernel.+(1)
 
                 {"migrate_resources_extensions_#{count}",
-                 "#{timestamp(true)}_migrate_resources_extensions_#{count}"}
+                 "#{timestamp(true)}_migrate_resources_extensions_#{count}#{dev}"}
               end
           end
 
@@ -372,40 +409,13 @@ defmodule AshPostgres.MigrationGenerator do
 
         contents = format(migration_file, contents, opts)
 
-        if opts.dry_run do
-          Mix.shell().info(snapshot_contents)
-          Mix.shell().info(contents)
-
-          if opts.check do
-            Mix.shell().error("""
-            Migrations would have been generated, but the --check flag was provided.
-
-            To see what migration would have been generated, run with the `--dry-run`
-            option instead. To generate those migrations, run without either flag.
-            """)
-
-            exit({:shutdown, 1})
-          end
-        else
-          if opts.check do
-            Mix.shell().error("""
-            Migrations would have been generated, but the --check flag was provided.
-
-            To see what migration would have been generated, run with the `--dry-run`
-            option instead. To generate those migrations, run without either flag.
-            """)
-
-            exit({:shutdown, 1})
-          end
-
-          create_file(snapshot_file, snapshot_contents, force: true)
-
-          if !opts.snapshots_only do
-            create_file(migration_file, contents)
-          end
-        end
+        [
+          {snapshot_file, snapshot_contents},
+          {migration_file, contents}
+        ]
       end
     end
+    |> List.flatten()
   end
 
   defp set_ash_functions(snapshot, installed_extensions) do
@@ -423,7 +433,7 @@ defmodule AshPostgres.MigrationGenerator do
   defp create_migrations(snapshots, opts, tenant?, non_tenant_snapshots \\ []) do
     snapshots
     |> Enum.group_by(& &1.repo)
-    |> Enum.each(fn {repo, snapshots} ->
+    |> Enum.flat_map(fn {repo, snapshots} ->
       deduped = deduplicate_snapshots(snapshots, opts, non_tenant_snapshots)
 
       snapshots_with_operations =
@@ -438,35 +448,35 @@ defmodule AshPostgres.MigrationGenerator do
       |> Enum.uniq()
       |> case do
         [] ->
-          tenant_str =
-            if tenant? do
-              "tenant "
-            else
-              ""
-            end
-
-          Mix.shell().info(
-            "No #{tenant_str}changes detected, so no migrations or snapshots have been created."
-          )
-
-          :ok
+          []
 
         operations ->
-          if opts.check do
-            Mix.shell().error("""
-            Migrations would have been generated, but the --check flag was provided.
+          dev_migrations = get_dev_migrations(opts, tenant?, repo)
 
-            To see what migration would have been generated, run with the `--dry-run`
-            option instead. To generate those migrations, run without either flag.
-            """)
+          if !opts.dev and dev_migrations != [] do
+            if opts.check do
+              Mix.shell().error("""
+              Codegen check failed.
 
-            exit({:shutdown, 1})
+              You have migrations remaining that were generated with the --dev flag.
+
+              Run `mix ash.codegen <name>` to remove the dev migraitons and replace them
+              with production ready migrations.
+              """)
+
+              exit({:shutdown, 1})
+            else
+              remove_dev_migrations(dev_migrations, tenant?, repo, opts)
+              remove_dev_snapshots(snapshots, opts)
+            end
           end
 
-          if !opts.snapshots_only do
+          if opts.snapshots_only do
+            []
+          else
             operations
             |> split_into_migrations()
-            |> Enum.each(fn operations ->
+            |> Enum.map(fn operations ->
               run_without_transaction? =
                 Enum.any?(operations, fn
                   %Operation.AddCustomIndex{index: %{concurrently: true}} ->
@@ -482,12 +492,171 @@ defmodule AshPostgres.MigrationGenerator do
               operations
               |> organize_operations
               |> build_up_and_down()
-              |> write_migration!(repo, opts, tenant?, run_without_transaction?)
+              |> migration(repo, opts, tenant?, run_without_transaction?)
             end)
           end
-
-          create_new_snapshot(snapshots, repo_name(repo), opts, tenant?)
+          |> Enum.concat(create_new_snapshot(snapshots, repo_name(repo), opts, tenant?))
       end
+    end)
+  end
+
+  defp get_dev_migrations(opts, tenant?, repo) do
+    opts
+    |> migration_path(repo, tenant?)
+    |> File.ls()
+    |> case do
+      {:error, _error} -> []
+      {:ok, migrations} -> Enum.filter(migrations, &String.contains?(&1, "_dev.exs"))
+    end
+  end
+
+  if Mix.env() == :test do
+    defp with_repo_not_in_test(repo, fun) do
+      fun.(repo)
+    end
+  else
+    defp with_repo_not_in_test(repo, fun) do
+      Ecto.Migrator.with_repo(repo, fun)
+    end
+  end
+
+  defp require_name!(opts) do
+    if !opts.name && !opts.dry_run && !opts.check && !opts.snapshots_only && !opts.dev &&
+         !opts.auto_name do
+      raise """
+      Name must be provided when generating migrations, unless `--dry-run` or `--check` or `--dev` is also provided.
+
+      Please provide a name. for example:
+
+          mix ash_postgres.generate_migrations <name> ...args
+      """
+    end
+
+    :ok
+  end
+
+  defp remove_dev_migrations(dev_migrations, tenant?, repo, opts) do
+    dev_migrations =
+      Enum.map(dev_migrations, fn migration ->
+        opts
+        |> migration_path(repo, tenant?)
+        |> Path.join(migration)
+      end)
+
+    if tenant? do
+      with_repo_not_in_test(repo, fn repo ->
+        for prefix <- repo.all_tenants() do
+          {repo, query, opts} = Ecto.Migration.SchemaMigration.versions(repo, [], prefix)
+
+          repo.transaction(fn ->
+            versions = repo.all(query, Keyword.put(opts, :timeout, :infinity))
+
+            dev_migrations
+            |> Enum.map(&extract_migration_info/1)
+            |> Enum.filter(& &1)
+            |> Enum.map(&load_migration!/1)
+            |> Enum.sort()
+            |> Enum.reverse()
+            |> Enum.filter(fn {version, _} ->
+              version in versions
+            end)
+            |> Enum.each(fn {version, mod} ->
+              Ecto.Migration.Runner.run(
+                repo,
+                [],
+                version,
+                mod,
+                :forward,
+                :down,
+                :down,
+                all: true,
+                prefix: prefix
+              )
+
+              Ecto.Migration.SchemaMigration.down(repo, repo.config(), version, prefix: prefix)
+            end)
+          end)
+        end
+      end)
+    else
+      with_repo_not_in_test(repo, fn repo ->
+        {repo, query, opts} = Ecto.Migration.SchemaMigration.versions(repo, [], nil)
+
+        repo.transaction(fn ->
+          versions = repo.all(query, opts)
+
+          dev_migrations
+          |> Enum.map(&extract_migration_info/1)
+          |> Enum.filter(& &1)
+          |> Enum.map(&load_migration!/1)
+          |> Enum.sort()
+          |> Enum.reverse()
+          |> Enum.filter(fn {version, _} ->
+            version in versions
+          end)
+          |> Enum.each(fn {version, mod} ->
+            Ecto.Migration.Runner.run(
+              repo,
+              [],
+              version,
+              mod,
+              :forward,
+              :down,
+              :down,
+              all: true
+            )
+
+            Ecto.Migration.SchemaMigration.down(repo, repo.config(), version, [])
+          end)
+        end)
+      end)
+    end
+
+    Enum.each(dev_migrations, &File.rm!/1)
+  end
+
+  defp extract_migration_info(file) do
+    base = Path.basename(file)
+
+    case Integer.parse(Path.rootname(base)) do
+      {integer, "_" <> name} -> {integer, name, file}
+      _ -> nil
+    end
+  end
+
+  defp load_migration!({version, _, file}) when is_binary(file) do
+    loaded_modules = file |> compile_file() |> Enum.map(&elem(&1, 0))
+
+    if mod = Enum.find(loaded_modules, &migration?/1) do
+      {version, mod}
+    else
+      raise Ecto.MigrationError,
+            "file #{Path.relative_to_cwd(file)} does not define an Ecto.Migration"
+    end
+  end
+
+  defp compile_file(file) do
+    AshPostgres.MigrationCompileCache.start_link()
+    AshPostgres.MigrationCompileCache.compile_file(file)
+  end
+
+  defp migration?(mod) do
+    function_exported?(mod, :__migration__, 0)
+  end
+
+  def remove_dev_snapshots(snapshots, opts) do
+    Enum.each(snapshots, fn snapshot ->
+      folder = get_snapshot_folder(snapshot, opts)
+      snapshot_path = get_snapshot_path(snapshot, folder)
+
+      snapshot_path
+      |> File.ls!()
+      |> Enum.filter(&String.contains?(&1, "_dev.json"))
+      |> Enum.each(fn snapshot_name ->
+        snapshot_path
+        |> Path.join(snapshot_name)
+        |> File.rm!()
+      end)
     end)
   end
 
@@ -694,6 +863,8 @@ defmodule AshPostgres.MigrationGenerator do
         generated?: Enum.any?(attributes, & &1.generated?),
         references: merge_references(Enum.map(attributes, & &1.references), source, table),
         primary_key?: false,
+        scale: attributes |> Enum.map(& &1[:scale]) |> Enum.max(),
+        precision: attributes |> Enum.map(& &1[:precision]) |> Enum.max(),
         order: attributes |> Enum.map(& &1.order) |> Enum.min()
       }
     end)
@@ -912,7 +1083,7 @@ defmodule AshPostgres.MigrationGenerator do
         Path.join(priv, "tenant_migrations")
       end
     else
-      if path = opts.migration_path || config[:tenant_migrations_path] do
+      if path = opts.migration_path || config[:migrations_path] do
         path
       else
         priv =
@@ -927,8 +1098,10 @@ defmodule AshPostgres.MigrationGenerator do
     repo |> Module.split() |> List.last() |> Macro.underscore()
   end
 
-  defp write_migration!({up, down}, repo, opts, tenant?, run_without_transaction?) do
+  defp migration({up, down}, repo, opts, tenant?, run_without_transaction?) do
     migration_path = migration_path(opts, repo, tenant?)
+
+    require_name!(opts)
 
     {migration_name, last_part} =
       if opts.name do
@@ -960,7 +1133,7 @@ defmodule AshPostgres.MigrationGenerator do
 
     migration_file =
       migration_path
-      |> Path.join(migration_name <> ".exs")
+      |> Path.join(migration_name <> "#{if opts.dev, do: "_dev"}.exs")
 
     module_name =
       if tenant? do
@@ -1000,13 +1173,7 @@ defmodule AshPostgres.MigrationGenerator do
     """
 
     try do
-      contents = format(migration_file, contents, opts)
-
-      if opts.dry_run do
-        Mix.shell().info(contents)
-      else
-        create_file(migration_file, contents)
-      end
+      {migration_file, format(migration_file, contents, opts)}
     rescue
       exception ->
         reraise(
@@ -1038,40 +1205,44 @@ defmodule AshPostgres.MigrationGenerator do
   end
 
   defp create_new_snapshot(snapshots, repo_name, opts, tenant?) do
-    if !opts.dry_run do
-      Enum.each(snapshots, fn snapshot ->
-        snapshot_binary = snapshot_to_binary(snapshot)
+    Enum.map(snapshots, fn snapshot ->
+      snapshot_binary = snapshot_to_binary(snapshot)
 
-        snapshot_folder =
-          if tenant? do
-            opts
-            |> snapshot_path(snapshot.repo)
-            |> Path.join(repo_name)
-            |> Path.join("tenants")
-          else
-            opts
-            |> snapshot_path(snapshot.repo)
-            |> Path.join(repo_name)
-          end
-
-        snapshot_file =
-          if snapshot.schema do
-            Path.join(snapshot_folder, "#{snapshot.schema}.#{snapshot.table}/#{timestamp()}.json")
-          else
-            Path.join(snapshot_folder, "#{snapshot.table}/#{timestamp()}.json")
-          end
-
-        File.mkdir_p(Path.dirname(snapshot_file))
-        create_file(snapshot_file, snapshot_binary, force: true)
-
-        old_snapshot_folder = Path.join(snapshot_folder, "#{snapshot.table}.json")
-
-        if File.exists?(old_snapshot_folder) do
-          new_snapshot_folder = Path.join(snapshot_folder, "#{snapshot.table}/initial.json")
-          File.rename(old_snapshot_folder, new_snapshot_folder)
+      snapshot_folder =
+        if tenant? do
+          opts
+          |> snapshot_path(snapshot.repo)
+          |> Path.join(repo_name)
+          |> Path.join("tenants")
+        else
+          opts
+          |> snapshot_path(snapshot.repo)
+          |> Path.join(repo_name)
         end
-      end)
-    end
+
+      dev = if opts.dev, do: "_dev"
+
+      snapshot_file =
+        if snapshot.schema do
+          Path.join(
+            snapshot_folder,
+            "#{snapshot.schema}.#{snapshot.table}/#{timestamp()}#{dev}.json"
+          )
+        else
+          Path.join(snapshot_folder, "#{snapshot.table}/#{timestamp()}#{dev}.json")
+        end
+
+      File.mkdir_p(Path.dirname(snapshot_file))
+
+      old_snapshot_folder = Path.join(snapshot_folder, "#{snapshot.table}#{dev}.json")
+
+      if File.exists?(old_snapshot_folder) do
+        new_snapshot_folder = Path.join(snapshot_folder, "#{snapshot.table}/initial#{dev}.json")
+        File.rename(old_snapshot_folder, new_snapshot_folder)
+      end
+
+      {snapshot_file, snapshot_binary}
+    end)
   end
 
   @doc false
@@ -1196,6 +1367,7 @@ defmodule AshPostgres.MigrationGenerator do
              table: table,
              schema: schema,
              multitenancy: multitenancy,
+             repo: repo,
              partitioning: partitioning
            }
            | rest
@@ -1208,7 +1380,7 @@ defmodule AshPostgres.MigrationGenerator do
       %Phase.Create{
         table: table,
         schema: schema,
-        multitenancy: multitenancy,
+        multitenancy: multitenancy, repo: repo,
         partitioning: partitioning
       },
       acc
@@ -1387,6 +1559,19 @@ defmodule AshPostgres.MigrationGenerator do
   end
 
   defp after?(
+         %Operation.AddCustomIndex{
+           table: table,
+           schema: schema
+         },
+         %Operation.RenameAttribute{
+           table: table,
+           schema: schema
+         }
+       ) do
+    true
+  end
+
+  defp after?(
          %Operation.AddReferenceIndex{
            table: table,
            schema: schema
@@ -1470,6 +1655,21 @@ defmodule AshPostgres.MigrationGenerator do
          %Operation.AddUniqueIndex{table: table, schema: schema}
        ) do
     false
+  end
+
+  defp after?(
+         %Operation.RenameAttribute{
+           old_attribute: %{source: source},
+           table: table,
+           schema: schema
+         },
+         %Operation.RemoveUniqueIndex{
+           identity: %{keys: keys},
+           table: table,
+           schema: schema
+         }
+       ) do
+    source in List.wrap(keys)
   end
 
   defp after?(
@@ -1701,6 +1901,19 @@ defmodule AshPostgres.MigrationGenerator do
 
   defp after?(
          %Operation.AlterAttribute{
+           old_attribute: %{
+             source: source
+           },
+           table: table,
+           schema: schema
+         },
+         %Operation.RemoveUniqueIndex{identity: %{keys: keys}, table: table, schema: schema}
+       ) do
+    source in List.wrap(keys)
+  end
+
+  defp after?(
+         %Operation.AlterAttribute{
            new_attribute: %{references: %{table: table, destination_attribute: source}}
          },
          %Operation.AlterAttribute{
@@ -1811,6 +2024,7 @@ defmodule AshPostgres.MigrationGenerator do
       %Operation.CreateTable{
         table: snapshot.table,
         schema: snapshot.schema,
+        repo: snapshot.repo,
         multitenancy: snapshot.multitenancy,
         old_multitenancy: empty_snapshot.multitenancy,
         partitioning: snapshot.partitioning
@@ -2622,49 +2836,55 @@ defmodule AshPostgres.MigrationGenerator do
   end
 
   def get_existing_snapshot(snapshot, opts) do
-    repo_name = snapshot.repo |> Module.split() |> List.last() |> Macro.underscore()
+    folder = get_snapshot_folder(snapshot, opts)
+    snapshot_path = get_snapshot_path(snapshot, folder)
 
-    folder =
-      if snapshot.multitenancy.strategy == :context do
-        opts
-        |> snapshot_path(snapshot.repo)
-        |> Path.join(repo_name)
-        |> Path.join("tenants")
-      else
-        opts
-        |> snapshot_path(snapshot.repo)
-        |> Path.join(repo_name)
-      end
-
-    snapshot_folder =
-      if snapshot.schema do
-        schema_dir = Path.join(folder, "#{snapshot.schema}.#{snapshot.table}")
-
-        if File.dir?(schema_dir) do
-          schema_dir
-        else
-          Path.join(folder, snapshot.table)
-        end
-      else
-        Path.join(folder, snapshot.table)
-      end
-
-    if File.exists?(snapshot_folder) do
-      snapshot_folder
+    if File.exists?(snapshot_path) do
+      snapshot_path
       |> File.ls!()
-      |> Enum.filter(&String.match?(&1, ~r/^\d{14}\.json$/))
+      |> Enum.filter(
+        &(String.match?(&1, ~r/^\d{14}\.json$/) or
+            (opts.dev and String.match?(&1, ~r/^\d{14}\_dev.json$/)))
+      )
       |> case do
         [] ->
           get_old_snapshot(folder, snapshot)
 
         snapshot_files ->
-          snapshot_folder
+          snapshot_path
           |> Path.join(Enum.max(snapshot_files))
           |> File.read!()
           |> load_snapshot()
       end
     else
       get_old_snapshot(folder, snapshot)
+    end
+  end
+
+  defp get_snapshot_folder(snapshot, opts) do
+    if snapshot.multitenancy.strategy == :context do
+      opts
+      |> snapshot_path(snapshot.repo)
+      |> Path.join(repo_name(snapshot.repo))
+      |> Path.join("tenants")
+    else
+      opts
+      |> snapshot_path(snapshot.repo)
+      |> Path.join(repo_name(snapshot.repo))
+    end
+  end
+
+  defp get_snapshot_path(snapshot, folder) do
+    if snapshot.schema do
+      schema_dir = Path.join(folder, "#{snapshot.schema}.#{snapshot.table}")
+
+      if File.dir?(schema_dir) do
+        schema_dir
+      else
+        Path.join(folder, snapshot.table)
+      end
+    else
+      Path.join(folder, snapshot.table)
     end
   end
 
@@ -2735,10 +2955,14 @@ defmodule AshPostgres.MigrationGenerator do
   end
 
   defp renaming?(table, removing, opts) do
-    if opts.no_shell? do
-      raise "Unimplemented: cannot determine: Are you renaming #{table}.#{removing.source}? without shell input"
+    if opts.dev do
+      false
     else
-      yes?(opts, "Are you renaming #{table}.#{removing.source}?")
+      if opts.no_shell? do
+        raise "Unimplemented: cannot determine: Are you renaming #{table}.#{removing.source}? without shell input"
+      else
+        yes?(opts, "Are you renaming #{table}.#{removing.source}?")
+      end
     end
   end
 
@@ -2998,20 +3222,8 @@ defmodule AshPostgres.MigrationGenerator do
           type
         end
 
-      {type, size} =
-        case type do
-          {:varchar, size} ->
-            {:varchar, size}
-
-          {:binary, size} ->
-            {:binary, size}
-
-          {other, size} when is_atom(other) and is_integer(size) ->
-            {other, size}
-
-          other ->
-            {other, nil}
-        end
+      {type, size, precision, scale} =
+        migration_type_to_type(type)
 
       attribute
       |> Map.put(:default, default)
@@ -3019,12 +3231,52 @@ defmodule AshPostgres.MigrationGenerator do
       |> Map.put(:type, type)
       |> Map.put(:source, attribute.source || attribute.name)
       |> Map.drop([:name, :constraints])
+      |> then(fn map ->
+        if precision do
+          Map.put(map, :precision, precision)
+        else
+          map
+        end
+      end)
+      |> then(fn map ->
+        if scale do
+          Map.put(map, :scale, scale)
+        else
+          map
+        end
+      end)
     end)
     |> Enum.map(fn attribute ->
       references = find_reference(resource, table, attribute)
 
       Map.put(attribute, :references, references)
     end)
+  end
+
+  defp migration_type_to_type(type) do
+    case type do
+      {:varchar, size} ->
+        {:varchar, size, nil, nil}
+
+      {:binary, size} ->
+        {:binary, size, nil, nil}
+
+      {:decimal, precision, scale} ->
+        {:decimal, nil, precision, scale}
+
+      {:decimal, precision} ->
+        {:decimal, nil, precision, nil}
+
+      {other, size} when is_atom(other) and is_integer(size) ->
+        {other, size, nil, nil}
+
+      {:array, other} ->
+        {nested, size, precision, scale} = migration_type_to_type(other)
+        {{:array, nested}, size, precision, scale}
+
+      other ->
+        {other, nil, nil, nil}
+    end
   end
 
   defp find_reference(resource, table, attribute) do
@@ -3131,10 +3383,33 @@ defmodule AshPostgres.MigrationGenerator do
     end
   end
 
+  defp migration_type(Ash.Type.Decimal, constraints) do
+    precision =
+      case constraints[:precision] do
+        :arbitrary -> nil
+        nil -> nil
+        precision -> precision
+      end
+
+    scale =
+      case constraints[:scale] do
+        :arbitrary -> nil
+        nil -> nil
+        scale -> scale
+      end
+
+    {:decimal, precision, scale}
+  end
+
   defp migration_type(other, constraints) do
     type = Ash.Type.get_type(other)
+    Code.ensure_loaded(type)
 
-    migration_type_from_storage_type(Ash.Type.storage_type(type, constraints))
+    if function_exported?(type, :migration_type, 1) do
+      type.migration_type(constraints)
+    else
+      migration_type_from_storage_type(Ash.Type.storage_type(type, constraints))
+    end
   end
 
   defp migration_type_from_storage_type(:string), do: :text
@@ -3326,29 +3601,19 @@ defmodule AshPostgres.MigrationGenerator do
         references
         |> Map.update!(:on_delete, &(&1 && references_on_delete_to_binary(&1)))
     end)
-    |> Map.update!(:type, fn type -> sanitize_type(type, attribute[:size]) end)
+    |> Map.update!(:type, fn type ->
+      sanitize_type(type, attribute[:size], attribute[:precision], attribute[:scale])
+    end)
   end
 
   defp references_on_delete_to_binary(value) when is_atom(value), do: value
   defp references_on_delete_to_binary({:nilify, columns}), do: [:nilify, columns]
 
-  defp sanitize_type({:array, type}, size) do
-    ["array", sanitize_type(type, size)]
+  defp sanitize_type({:array, type}, size, scale, precision) do
+    ["array", sanitize_type(type, size, scale, precision)]
   end
 
-  defp sanitize_type(:varchar, size) when not is_nil(size) do
-    ["varchar", size]
-  end
-
-  defp sanitize_type(:binary, size) when not is_nil(size) do
-    ["binary", size]
-  end
-
-  defp sanitize_type(type, size) when is_atom(type) and is_integer(size) do
-    [sanitize_type(type, nil), size]
-  end
-
-  defp sanitize_type(type, _) do
+  defp sanitize_type(type, _, _, _) do
     type
   end
 
@@ -3437,21 +3702,6 @@ defmodule AshPostgres.MigrationGenerator do
   defp load_attribute(attribute, table) do
     type = load_type(attribute.type)
 
-    {type, size} =
-      case type do
-        {:varchar, size} ->
-          {:varchar, size}
-
-        {:binary, size} ->
-          {:binary, size}
-
-        {other, size} when is_atom(other) and is_integer(size) ->
-          {other, size}
-
-        other ->
-          {other, nil}
-      end
-
     attribute =
       if Map.has_key?(attribute, :name) do
         Map.put(attribute, :source, maybe_to_atom(attribute.name))
@@ -3461,7 +3711,9 @@ defmodule AshPostgres.MigrationGenerator do
 
     attribute
     |> Map.put(:type, type)
-    |> Map.put(:size, size)
+    |> Map.put_new(:size, nil)
+    |> Map.put_new(:precision, nil)
+    |> Map.put_new(:scale, nil)
     |> Map.put_new(:default, "nil")
     |> Map.update!(:default, &(&1 || "nil"))
     |> Map.update!(:references, fn
@@ -3540,17 +3792,7 @@ defmodule AshPostgres.MigrationGenerator do
     {:array, load_type(type)}
   end
 
-  defp load_type(["varchar", size]) do
-    {:varchar, size}
-  end
-
-  defp load_type(["binary", size]) do
-    {:binary, size}
-  end
-
-  defp load_type([string, size]) when is_binary(string) and is_integer(size) do
-    {String.to_existing_atom(string), size}
-  end
+  defp load_type([type | _]), do: String.to_existing_atom(type)
 
   defp load_type(type) do
     maybe_to_atom(type)

@@ -92,6 +92,12 @@ defmodule AshPostgres.Test.Post do
       authorize_if(relates_to_actor_via([:organization, :users]))
     end
 
+    policy action(:read_with_policy_with_parent) do
+      authorize_if(
+        relates_to_actor_via([:posts_with_my_organization_name_as_a_title, :organization, :users])
+      )
+    end
+
     policy action(:allow_any) do
       authorize_if(always())
     end
@@ -154,9 +160,66 @@ defmodule AshPostgres.Test.Post do
 
     defaults([:read, :destroy])
 
+    read :with_version_check do
+      argument(:version, :integer)
+
+      filter(expr(type(^arg(:version), :string) in ["1", "2"]))
+    end
+
+    read :first_and_last_post do
+      prepare(fn query, _ ->
+        Ash.Query.combination_of(query, [
+          Ash.Query.Combination.base(
+            limit: 1,
+            sort: [created_at: :desc]
+          ),
+          Ash.Query.Combination.union(
+            limit: 1,
+            sort: [created_at: :asc]
+          )
+        ])
+      end)
+    end
+
+    read :first_and_last_two_posts do
+      prepare(fn query, _ ->
+        Ash.Query.combination_of(query, [
+          Ash.Query.Combination.base(
+            limit: 2,
+            sort: [created_at: :desc]
+          ),
+          Ash.Query.Combination.union(
+            limit: 2,
+            sort: [created_at: :asc]
+          )
+        ])
+      end)
+    end
+
+    update :subtract_integer_from_decimal do
+      argument(:amount, :integer, allow_nil?: false)
+      change(atomic_update(:decimal, expr(decimal + -(^arg(:amount)))))
+    end
+
+    update :subtract_from_decimal do
+      argument(:amount, :decimal, allow_nil?: false)
+      change(atomic_update(:decimal, expr(decimal + -(^arg(:amount)))))
+    end
+
     update :add_to_limited_score do
       argument(:amount, :integer, allow_nil?: false)
       change(atomic_update(:limited_score, expr((limited_score || 0) + ^arg(:amount))))
+    end
+
+    update :validate_absent_non_atomically do
+      require_atomic?(false)
+      accept([:title])
+      validate(absent(:title))
+    end
+
+    update :validate_absent do
+      accept([:title])
+      validate(absent(:title))
     end
 
     update :change_nothing do
@@ -285,6 +348,9 @@ defmodule AshPostgres.Test.Post do
       require_atomic?(false)
     end
 
+    update :atomic_update do
+    end
+
     update :update_if_author do
       require_atomic?(false)
     end
@@ -298,6 +364,9 @@ defmodule AshPostgres.Test.Post do
 
     read :title_is_foo do
       filter(expr(title == "foo"))
+    end
+
+    read :read_with_policy_with_parent do
     end
 
     read :category_matches do
@@ -372,6 +441,21 @@ defmodule AshPostgres.Test.Post do
       change(atomic_update(:score, expr((score || 0) + ^arg(:amount))))
     end
 
+    update :review do
+      change(
+        after_action(fn changeset, record, _context ->
+          new_model = {1.0, 2.0, 3.0}
+
+          record
+          |> Ash.Changeset.for_update(:atomic_update)
+          |> Ash.Changeset.force_change_attribute(:model, new_model)
+          |> Ash.update()
+        end)
+      )
+
+      require_atomic?(false)
+    end
+
     update :requires_initial_data do
       argument(:amount, :integer, default: 1)
       change(atomic_update(:score, expr((score || 0) + ^arg(:amount))))
@@ -393,6 +477,10 @@ defmodule AshPostgres.Test.Post do
 
     update :optimistic_lock do
       accept([:title])
+      change(optimistic_lock(:version))
+    end
+
+    destroy :optimistic_lock_destroy do
       change(optimistic_lock(:version))
     end
 
@@ -430,6 +518,7 @@ defmodule AshPostgres.Test.Post do
     attribute(:limited_score, :integer, public?: true, constraints: [min: 0, max: 100])
 
     attribute(:public, :boolean, public?: true)
+    attribute(:is_special, :boolean, public?: true, allow_nil?: false, default: true)
     attribute(:category, CiCategory, public?: true)
     attribute(:type, :atom, default: :sponsored, writable?: false, public?: false)
     attribute(:price, :integer, public?: true)
@@ -452,6 +541,8 @@ defmodule AshPostgres.Test.Post do
 
     attribute(:point, AshPostgres.Test.Point, public?: true)
     attribute(:composite_point, AshPostgres.Test.CompositePoint, public?: true)
+    attribute(:string_point, AshPostgres.Test.StringPoint, public?: true)
+    attribute(:person_detail, AshPostgres.Test.PersonDetail, public?: true)
     attribute(:stuff, :map, public?: true)
     attribute(:list_of_stuff, {:array, :map}, public?: true)
     attribute(:uniq_one, :string, public?: true)
@@ -460,6 +551,18 @@ defmodule AshPostgres.Test.Post do
     attribute(:uniq_custom_two, :string, public?: true)
     attribute(:uniq_on_upper, :string, public?: true)
     attribute(:uniq_if_contains_foo, :string, public?: true)
+
+    attribute :model, :tuple do
+      constraints(
+        fields: [
+          alpha: [type: :float, description: "The alpha field"],
+          beta: [type: :float, description: "The beta field"],
+          t: [type: :float, description: "The t field"]
+        ]
+      )
+
+      default(fn -> {3.0, 3.0, 1.0} end)
+    end
 
     attribute :list_containing_nils, {:array, :string} do
       public?(true)
@@ -505,6 +608,12 @@ defmodule AshPostgres.Test.Post do
       filter(expr(^actor(:id) == id))
     end
 
+    has_many(:posts_with_my_organization_name_as_a_title, __MODULE__) do
+      public?(true)
+      no_attributes?(true)
+      filter(expr(fragment("? = ?", title, parent(organization.name))))
+    end
+
     belongs_to :parent_post, __MODULE__ do
       public?(true)
     end
@@ -513,10 +622,17 @@ defmodule AshPostgres.Test.Post do
       public?(true)
     end
 
+    has_one :author_from_exists, AshPostgres.Test.Author do
+      public?(true)
+      no_attributes?(true)
+      filter(expr(exists(posts, id == parent(parent(id)))))
+    end
+
     has_many :co_author_posts, AshPostgres.Test.CoAuthorPost do
       public?(true)
 
       destination_attribute(:post_id)
+      filter(expr(not is_nil(post.id)))
     end
 
     many_to_many :co_authors, AshPostgres.Test.Author do
@@ -535,6 +651,18 @@ defmodule AshPostgres.Test.Post do
       public?(true)
       no_attributes?(true)
       filter(expr(parent(title) == title and parent(id) != id))
+    end
+
+    has_many :posts_with_matching_point, __MODULE__ do
+      public?(true)
+      no_attributes?(true)
+      filter(expr(parent(point) == point and parent(id) != id))
+    end
+
+    has_many :posts_with_matching_string_point, __MODULE__ do
+      public?(true)
+      no_attributes?(true)
+      filter(expr(parent(string_point) == string_point and parent(id) != id))
     end
 
     has_many(:comments, AshPostgres.Test.Comment, destination_attribute: :post_id, public?: true)
@@ -654,6 +782,18 @@ defmodule AshPostgres.Test.Post do
     end
 
     has_many(:permalinks, AshPostgres.Test.Permalink)
+
+    belongs_to :db_point, AshPostgres.Test.DbPoint do
+      public?(true)
+      allow_nil?(true)
+      attribute_type(AshPostgres.Test.Point)
+    end
+
+    belongs_to :db_string_point, AshPostgres.Test.DbStringPoint do
+      public?(true)
+      allow_nil?(true)
+      attribute_type(AshPostgres.Test.StringPoint)
+    end
   end
 
   validations do
@@ -663,6 +803,22 @@ defmodule AshPostgres.Test.Post do
   end
 
   calculations do
+    calculate :relevance_score,
+              :integer,
+              expr(
+                if fragment(
+                     "ts_rank_cd(to_tsvector(?), ?, 32)::float",
+                     ^ref(:title),
+                     fragment("to_tsquery(?)", ^arg(:query))
+                   ) > 0.6 do
+                  1
+                else
+                  2
+                end
+              ) do
+      argument(:query, :string)
+    end
+
     calculate(:upper_thing, :string, expr(fragment("UPPER(?)", uniq_on_upper)))
 
     calculate(:upper_title, :string, expr(fragment("UPPER(?)", title)))
@@ -748,6 +904,25 @@ defmodule AshPostgres.Test.Post do
       load: [:count_of_comments, :count_of_linked_posts]
     )
 
+    calculate(
+      :literal_map_in_expr,
+      :map,
+      expr(
+        cond do
+          title == "match" ->
+            %{match: true, of: "match"}
+
+          title == "not-match" ->
+            %{match: true, of: "not-match"}
+
+          true ->
+            %{match: false}
+        end
+      )
+    ) do
+      constraints(fields: [match: [type: :boolean], of: [type: :string]])
+    end
+
     calculate :similarity,
               :boolean,
               expr(fragment("(to_tsvector(?) @@ ?)", title, ^arg(:search))) do
@@ -802,7 +977,7 @@ defmodule AshPostgres.Test.Post do
     calculate(
       :start_of_day,
       :datetime,
-      expr(start_of_day(fragment("now() AT TIME ZONE 'UTC'"), "EST"))
+      expr(start_of_day(fragment("now()"), "EST"))
     )
 
     calculate(:author_count_of_posts, :integer, expr(author.count_of_posts_with_calc))
@@ -831,11 +1006,18 @@ defmodule AshPostgres.Test.Post do
     calculate(:author_first_name_ref_agg_calc, :string, expr(author_first_name))
 
     calculate(:author_profile_description_from_agg, :string, expr(author_profile_description))
+
+    calculate(:latest_comment_title, :string, expr(latest_comment.title), allow_nil?: true)
   end
 
   aggregates do
     sum(:sum_of_comment_ratings_calc, [:comments, :ratings], :double_score)
     count(:count_of_comments, :comments)
+
+    count :count_of_comments_with_same_name, :comments do
+      filter(expr(title == parent(title)))
+    end
+
     count(:count_of_linked_posts, :linked_posts)
 
     count :count_of_comments_called_match, :comments do
@@ -844,6 +1026,13 @@ defmodule AshPostgres.Test.Post do
 
     exists :has_comment_called_match, :comments do
       filter(title: "match")
+    end
+
+    count :count_of_comments_matching_org_name, [
+      :posts_with_matching_title,
+      :comments
+    ] do
+      filter(expr(parent(organization.name) == title))
     end
 
     count(:count_of_comments_containing_title, :comments_containing_title)
@@ -919,6 +1108,10 @@ defmodule AshPostgres.Test.Post do
 
     sum :sum_of_popular_comment_rating_scores, [:comments, :ratings], :score do
       filter(expr(score > 5))
+    end
+
+    sum :sum_of_odd_comment_rating_scores, [:comments, :ratings], :score do
+      filter(expr(rem(score, 2) == 1))
     end
 
     sum(:sum_of_popular_comment_rating_scores_2, [:comments, :popular_ratings], :score)

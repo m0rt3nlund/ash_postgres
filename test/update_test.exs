@@ -50,9 +50,12 @@ defmodule AshPostgres.UpdateTest do
       }
     )
 
-    Post
-    |> Ash.Changeset.for_create(:create, %{title: "fred"})
-    |> Ash.create!()
+    post =
+      Post
+      |> Ash.Changeset.for_create(:create, %{title: "fred"})
+      |> Ash.create!()
+
+    post
     |> Ash.Changeset.for_update(
       :optimistic_lock,
       %{
@@ -60,6 +63,40 @@ defmodule AshPostgres.UpdateTest do
       }
     )
     |> Ash.update!()
+
+    assert_raise Ash.Error.Invalid, ~r/Attempted to update stale record/, fn ->
+      post
+      |> Ash.Changeset.for_update(
+        :optimistic_lock,
+        %{
+          title: "harry"
+        }
+      )
+      |> Ash.update!()
+    end
+  end
+
+  test "absent validations behave the same atomically and non-atomically" do
+    post =
+      AshPostgres.Test.Post
+      |> Ash.Changeset.for_create(:create, %{title: "match"})
+      |> Ash.create!()
+
+    assert_raise Ash.Error.Invalid, ~r/must be absent/, fn ->
+      Ash.update!(post, %{title: "title"}, action: :validate_absent_non_atomically)
+    end
+
+    assert_raise Ash.Error.Invalid, ~r/must be absent/, fn ->
+      Ash.update!(post, %{}, action: :validate_absent_non_atomically)
+    end
+
+    assert_raise Ash.Error.Invalid, ~r/must be absent/, fn ->
+      Ash.update!(post, %{title: "title"}, action: :validate_absent)
+    end
+
+    assert_raise Ash.Error.Invalid, ~r/must be absent/, fn ->
+      Ash.update!(post, %{}, action: :validate_absent)
+    end
   end
 
   test "timestamps arent updated if there are no changes non-atomically" do
@@ -180,5 +217,26 @@ defmodule AshPostgres.UpdateTest do
     |> Map.get(:author)
 
     assert is_nil(post.author)
+  end
+
+  test "loaded relationships remain loaded after update" do
+    author =
+      AshPostgres.Test.Author
+      |> Ash.Changeset.for_create(:create, %{first_name: "foo", last_name: "bar"})
+      |> Ash.create!()
+
+    _post =
+      AshPostgres.Test.Post
+      |> Ash.Changeset.for_create(:create, %{title: "baz"})
+      |> Ash.Changeset.manage_relationship(:author, author, type: :append_and_remove)
+      |> Ash.create!()
+
+    author = author |> Ash.load!(:posts)
+
+    assert [%Post{}] = author.posts
+
+    author = author |> Ash.Changeset.for_update(:update, %{first_name: "foo2"}) |> Ash.update!()
+
+    assert [%Post{}] = author.posts
   end
 end

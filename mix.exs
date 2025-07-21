@@ -5,7 +5,7 @@ defmodule AshPostgres.MixProject do
   The PostgreSQL data layer for Ash Framework
   """
 
-  @version "2.5.5"
+  @version "2.6.10"
 
   def project do
     [
@@ -57,7 +57,7 @@ defmodule AshPostgres.MixProject do
       name: :ash_postgres,
       licenses: ["MIT"],
       files: ~w(lib .formatter.exs mix.exs README* LICENSE*
-      CHANGELOG* documentation),
+      CHANGELOG* documentation usage-rules.md),
       links: %{
         Changelog: "https://hexdocs.pm/ash_postgres/changelog.html",
         GitHub: "https://github.com/ash-project/ash_postgres"
@@ -97,6 +97,7 @@ defmodule AshPostgres.MixProject do
         "documentation/topics/development/upgrading-to-2.0.md",
         "documentation/topics/advanced/expressions.md",
         "documentation/topics/advanced/schema-based-multitenancy.md",
+        "documentation/topics/advanced/using-multiple-repos.md",
         "documentation/topics/advanced/manual-relationships.md",
         {"documentation/dsls/DSL-AshPostgres.DataLayer.md",
          search_data: Spark.Docs.search_data_for(AshPostgres.DataLayer)},
@@ -165,11 +166,11 @@ defmodule AshPostgres.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, ash_version("~> 3.4 and >= 3.4.64")},
-      {:ash_sql, ash_sql_version("~> 0.2 and >= 0.2.43")},
-      {:igniter, "~> 0.5 and >= 0.5.16", optional: true},
-      {:ecto_sql, "~> 3.12"},
-      {:ecto, "~> 3.12 and >= 3.12.1"},
+      {:ash, ash_version("~> 3.5 and >= 3.5.13")},
+      {:ash_sql, ash_sql_version("~> 0.2 and >= 0.2.72")},
+      {:igniter, "~> 0.6 and >= 0.6.14", optional: true},
+      {:ecto_sql, "~> 3.13"},
+      {:ecto, "~> 3.13"},
       {:jason, "~> 1.0"},
       {:postgrex, ">= 0.0.0"},
       # dev/test dependencies
@@ -239,7 +240,7 @@ defmodule AshPostgres.MixProject do
       format: "format --migrate",
       "spark.formatter": "spark.formatter --extensions AshPostgres.DataLayer",
       "spark.cheat_sheets": "spark.cheat_sheets --extensions AshPostgres.DataLayer",
-      "test.generate_migrations": "ash_postgres.generate_migrations",
+      "test.generate_migrations": "ash_postgres.generate_migrations --auto-name",
       "test.check_migrations": "ash_postgres.generate_migrations --check",
       "test.migrate_tenants": "ash_postgres.migrate --tenants",
       "test.migrate": "ash_postgres.migrate",

@@ -2,7 +2,7 @@ defmodule AshPostgres.Test.MultitenancyTest do
   use AshPostgres.RepoCase, async: false
 
   require Ash.Query
-  alias AshPostgres.MultitenancyTest.{Org, Post, User, CompositeKeyPost}
+  alias AshPostgres.MultitenancyTest.{CompositeKeyPost, NamedOrg, Org, Post, User, CompositeKeyPost}
   alias AshPostgres.Test.Post, as: GlobalPost
 
   setup do
@@ -123,6 +123,16 @@ defmodule AshPostgres.Test.MultitenancyTest do
                SELECT schema_name FROM information_schema.schemata WHERE schema_name = '#{new_tenant}';
                """
              )
+  end
+
+  test "composite key multitenancy works", %{org1: org1} do
+    CompositeKeyPost
+    |> Ash.Changeset.for_create(:create, %{title: "foo"})
+    |> Ash.Changeset.manage_relationship(:org, org1, type: :append_and_remove)
+    |> Ash.Changeset.set_tenant(org1)
+    |> Ash.create!()
+
+    assert [_] = CompositeKeyPost |> Ash.Query.set_tenant(org1) |> Ash.read!()
   end
 
   test "composite key multitenancy works", %{org1: org1} do
@@ -290,5 +300,34 @@ defmodule AshPostgres.Test.MultitenancyTest do
                    |> Ash.Changeset.set_tenant(org1)
                    |> Ash.create!()
                  end
+  end
+
+  test "rejects characters other than alphanumericals, - and _ on tenant creation" do
+    assert_raise(
+      Ash.Error.Unknown,
+      ~r/Tenant name must match ~r\/\^\[a-zA-Z0-9_-]\+\$\/, got:/,
+      fn ->
+        NamedOrg
+        |> Ash.Changeset.for_create(:create, %{name: "🚫"})
+        |> Ash.create!()
+      end
+    )
+  end
+
+  test "rejects characters other than alphanumericals, - and _ when renaming tenant" do
+    org =
+      NamedOrg
+      |> Ash.Changeset.for_create(:create, %{name: "toto"})
+      |> Ash.create!()
+
+    assert_raise(
+      Ash.Error.Unknown,
+      ~r/Tenant name must match ~r\/\^\[a-zA-Z0-9_-]\+\$\/, got:/,
+      fn ->
+        org
+        |> Ash.Changeset.for_update(:update, %{name: "🚫"})
+        |> Ash.update!()
+      end
+    )
   end
 end

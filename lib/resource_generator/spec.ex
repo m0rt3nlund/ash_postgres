@@ -114,6 +114,9 @@ defmodule AshPostgres.ResourceGenerator.Spec do
           |> add_indexes()
           |> add_check_constraints()
         end)
+        |> Enum.reject(fn spec ->
+          spec.table_name in List.wrap(opts[:skip_tables])
+        end)
       end)
 
     result
@@ -394,7 +397,7 @@ defmodule AshPostgres.ResourceGenerator.Spec do
     |> String.trim_leading("CREATE ")
     |> String.trim_leading("UNIQUE ")
     |> String.trim_leading("INDEX ")
-    |> String.replace(~r/^[a-zA-Z0-9_\.]+\s/, "")
+    |> String.replace(~r/^"?[a-zA-Z0-9_\.]+"?\s/, "")
     |> String.trim_leading("ON ")
     |> String.replace(~r/^[\S]+/, "")
     |> String.trim_leading()
@@ -641,7 +644,7 @@ defmodule AshPostgres.ResourceGenerator.Spec do
                   [
                     %Relationship{
                       type: :belongs_to,
-                      name: Inflex.singularize(references),
+                      name: Igniter.Inflex.singularize(references),
                       source: spec.resource,
                       constraint_name: constraint_name,
                       match_with: match_with,
@@ -691,16 +694,16 @@ defmodule AshPostgres.ResourceGenerator.Spec do
 
           {name, type} =
             if has_unique_index? do
-              if Inflex.pluralize(table) == table do
-                {Inflex.singularize(table), :has_one}
+              if Igniter.Inflex.pluralize(table) == table do
+                {Igniter.Inflex.singularize(table), :has_one}
               else
                 {table, :has_one}
               end
             else
-              if Inflex.pluralize(table) == table do
+              if Igniter.Inflex.pluralize(table) == table do
                 {table, :has_many}
               else
-                {Inflex.pluralize(table), :has_many}
+                {Igniter.Inflex.pluralize(table), :has_many}
               end
             end
 
@@ -735,57 +738,61 @@ defmodule AshPostgres.ResourceGenerator.Spec do
   defp name_all_relationships(_type, _opts, _spec, _name, [], acc), do: acc
 
   defp name_all_relationships(type, opts, spec, name, [relationship | rest], acc) do
-    label =
-      case type do
-        :belongs_to ->
-          """
-          Multiple foreign keys found from `#{inspect(spec.resource)}` to `#{inspect(relationship.destination)}` with the guessed name `#{name}`.
+    if opts[:yes?] || opts[:skip_unknown] do
+      name_all_relationships(type, opts, spec, name, rest, acc)
+    else
+      label =
+        case type do
+          :belongs_to ->
+            """
+            Multiple foreign keys found from `#{inspect(spec.resource)}` to `#{inspect(relationship.destination)}` with the guessed name `#{name}`.
 
-          Provide a relationship name for the one with the following info:
+            Provide a relationship name for the one with the following info:
 
-          Resource: `#{inspect(spec.resource)}`
-          Relationship Type: :belongs_to
-          Guessed Name: `:#{name}`
-          Relationship Destination: `#{inspect(relationship.destination)}`
-          Constraint Name: `#{inspect(relationship.constraint_name)}`.
+            Resource: `#{inspect(spec.resource)}`
+            Relationship Type: :belongs_to
+            Guessed Name: `:#{name}`
+            Relationship Destination: `#{inspect(relationship.destination)}`
+            Constraint Name: `#{inspect(relationship.constraint_name)}`.
 
-          Leave empty to skip adding this relationship.
+            Leave empty to skip adding this relationship.
 
-          Name:
-          """
-          |> String.trim_trailing()
+            Name:
+            """
+            |> String.trim_trailing()
 
-        _ ->
-          """
-          Multiple foreign keys found from `#{inspect(relationship.source)}` to `#{inspect(spec.resource)}` with the guessed name `#{name}`.
+          _ ->
+            """
+            Multiple foreign keys found from `#{inspect(relationship.source)}` to `#{inspect(spec.resource)}` with the guessed name `#{name}`.
 
-          Provide a relationship name for the one with the following info:
+            Provide a relationship name for the one with the following info:
 
-          Resource: `#{inspect(relationship.source)}`
-          Relationship Type: :#{relationship.type}
-          Guessed Name: `:#{name}`
-          Relationship Destination: `#{inspect(spec.resource)}`
-          Constraint Name: `#{inspect(relationship.constraint_name)}`.
+            Resource: `#{inspect(relationship.source)}`
+            Relationship Type: :#{relationship.type}
+            Guessed Name: `:#{name}`
+            Relationship Destination: `#{inspect(spec.resource)}`
+            Constraint Name: `#{inspect(relationship.constraint_name)}`.
 
-          Leave empty to skip adding this relationship.
+            Leave empty to skip adding this relationship.
 
-          Name:
-          """
-          |> String.trim_trailing()
+            Name:
+            """
+            |> String.trim_trailing()
+        end
+
+      Owl.IO.input(label: label, optional: true)
+      |> String.trim()
+      # common typo
+      |> String.trim_leading(":")
+      |> case do
+        "" ->
+          name_all_relationships(type, opts, spec, name, rest, acc)
+
+        new_name ->
+          name_all_relationships(type, opts, spec, name, rest, [
+            %{relationship | name: new_name} | acc
+          ])
       end
-
-    Owl.IO.input(label: label)
-    |> String.trim()
-    # common typo
-    |> String.trim_leading(":")
-    |> case do
-      "" ->
-        name_all_relationships(type, opts, spec, name, rest, acc)
-
-      new_name ->
-        name_all_relationships(type, opts, spec, name, rest, [
-          %{relationship | name: new_name} | acc
-        ])
     end
   end
 
@@ -865,19 +872,22 @@ defmodule AshPostgres.ResourceGenerator.Spec do
 
   def set_types(attributes, opts) do
     attributes
-    |> Enum.map(fn attribute ->
+    |> Enum.flat_map(fn attribute ->
       case Process.get({:type_cache, attribute.type}) do
         nil ->
           case type(attribute.type) do
             {:ok, type} ->
-              %{attribute | attr_type: type}
+              [%{attribute | attr_type: type}]
 
             :error ->
-              get_type(attribute, opts)
+              case get_type(attribute, opts) do
+                :skip -> []
+                {:ok, type} -> [%{attribute | attr_type: type}]
+              end
           end
 
         type ->
-          %{attribute | attr_type: type}
+          [%{attribute | attr_type: type}]
       end
     end)
   end
@@ -885,7 +895,7 @@ defmodule AshPostgres.ResourceGenerator.Spec do
   # sobelow_skip ["RCE.CodeModule", "DOS.StringToAtom"]
   defp get_type(attribute, opts) do
     result =
-      if opts[:yes?] do
+      if opts[:yes?] || opts[:skip_unknown] do
         "skip"
       else
         Mix.shell().prompt("""
@@ -898,26 +908,25 @@ defmodule AshPostgres.ResourceGenerator.Spec do
            - MyApp.Types.CustomType
            - {:array, :string}
 
-        Use `skip` to skip ignore this attribute.
+        Use `skip` to ignore this attribute.
         """)
       end
 
     case result do
       skip when skip in ["skip", "skip\n"] ->
-        attribute
+        :skip
 
       new_type ->
         case String.trim(new_type) do
           ":" <> type ->
             new_type = String.to_atom(type)
             Process.put({:type_cache, attribute.type}, new_type)
-            %{attribute | attr_type: new_type}
+            {:ok, new_type}
 
           type ->
             try do
-              Code.eval_string(type)
               Process.put({:type_cache, attribute.type}, new_type)
-              %{attribute | attr_type: new_type}
+              {:ok, type}
             rescue
               _e ->
                 get_type(attribute, opts)
@@ -948,7 +957,7 @@ defmodule AshPostgres.ResourceGenerator.Spec do
   defp type("numeric"), do: {:ok, :decimal}
   defp type("decimal"), do: {:ok, :decimal}
   defp type("smallint"), do: {:ok, :integer}
-  defp type("smallserial"), do: {:ok, :ineger}
+  defp type("smallserial"), do: {:ok, :integer}
   defp type("serial"), do: {:ok, :integer}
   defp type("text"), do: {:ok, :string}
   defp type("time"), do: {:ok, :time}

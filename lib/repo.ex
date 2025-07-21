@@ -78,6 +78,9 @@ defmodule AshPostgres.Repo do
   @doc "The default prefix(postgres schema) to use when building queries"
   @callback default_prefix() :: String.t()
 
+  @doc "Whether or not to create schemas for tables when generating migrations"
+  @callback create_schemas_in_migrations?() :: boolean()
+
   @doc "Whether or not to explicitly start and close a transaction for each action, even if there are no transaction hooks. Defaults to `true`."
   @callback prefer_transaction?() :: boolean
 
@@ -135,6 +138,7 @@ defmodule AshPostgres.Repo do
       def installed_extensions, do: []
       def tenant_migrations_path, do: nil
       def migrations_path, do: nil
+      def create_schemas_in_migrations?, do: true
       def default_prefix, do: "public"
       def override_migration_type(type), do: type
       def create?, do: true
@@ -182,6 +186,17 @@ defmodule AshPostgres.Repo do
 
       def on_transaction_begin(_reason), do: :ok
 
+      # copied from Ecto.Repo
+      defp ash_postgres_prepare_opts(operation_name, []),
+        do: default_options(operation_name)
+
+      defp ash_postgres_prepare_opts(operation_name, [{key, _} | _rest] = opts)
+           when is_atom(key) do
+        operation_name
+        |> default_options()
+        |> Keyword.merge(opts)
+      end
+
       def insert(struct_or_changeset, opts \\ []) do
         struct_or_changeset
         |> to_ecto()
@@ -192,7 +207,7 @@ defmodule AshPostgres.Repo do
             __MODULE__,
             repo,
             value,
-            Ecto.Repo.Supervisor.tuplet(repo, prepare_opts(:insert, opts))
+            Ecto.Repo.Supervisor.tuplet(repo, ash_postgres_prepare_opts(:insert, opts))
           )
         end)
         |> from_ecto()
@@ -208,7 +223,7 @@ defmodule AshPostgres.Repo do
             __MODULE__,
             repo,
             value,
-            Ecto.Repo.Supervisor.tuplet(repo, prepare_opts(:insert, opts))
+            Ecto.Repo.Supervisor.tuplet(repo, ash_postgres_prepare_opts(:insert, opts))
           )
         end)
         |> from_ecto()
@@ -293,6 +308,8 @@ defmodule AshPostgres.Repo do
                      prefer_transaction?: 0,
                      prefer_transaction_for_atomic_updates?: 0,
                      tenant_migrations_path: 0,
+                     create_schemas_in_migrations?: 0,
+                     migrations_path: 0,
                      default_prefix: 0,
                      override_migration_type: 1,
                      create?: 0,

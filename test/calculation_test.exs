@@ -1,6 +1,7 @@
 defmodule AshPostgres.CalculationTest do
+  alias AshPostgres.Test.RecordTempEntity
   use AshPostgres.RepoCase, async: false
-  alias AshPostgres.Test.{Account, Author, Comedian, Comment, Post, User}
+  alias AshPostgres.Test.{Account, Author, Comedian, Comment, Post, Record, TempEntity, User}
 
   require Ash.Query
   import Ash.Expr
@@ -776,6 +777,18 @@ defmodule AshPostgres.CalculationTest do
   end
 
   describe "maps" do
+    test "literal maps inside of conds can be loaded" do
+      post =
+        Post
+        |> Ash.Changeset.for_create(:create, %{title: "match", score: 42})
+        |> Ash.create!()
+
+      assert Ash.load!(post, :literal_map_in_expr).literal_map_in_expr == %{
+               match: true,
+               of: "match"
+             }
+    end
+
     test "maps can reference filtered aggregates" do
       post =
         Post
@@ -1003,5 +1016,33 @@ defmodule AshPostgres.CalculationTest do
 
   def fred do
     "fred"
+  end
+
+  test "calculation references use the appropriate schema" do
+    record = Record |> Ash.Changeset.for_create(:create, %{full_name: "name"}) |> Ash.create!()
+
+    temp_entity =
+      TempEntity |> Ash.Changeset.for_create(:create, %{full_name: "name"}) |> Ash.create!()
+
+    Ash.Seed.seed!(RecordTempEntity, %{record_id: record.id, temp_entity_id: temp_entity.id})
+
+    full_name =
+      Record
+      |> Ash.Query.load(:temp_entity_full_name)
+      |> Ash.read_first!()
+      |> Map.get(:temp_entity_full_name)
+
+    assert full_name == "name"
+  end
+
+  test "calculation with fragment and cond returning integer doesn't cause Postgrex encoding error" do
+    Post
+    |> Ash.Changeset.for_create(:create, %{title: "hello ash lovers"})
+    |> Ash.create!()
+
+    assert [%Post{}] =
+             Post
+             |> Ash.Query.sort("posts_with_matching_title.relevance_score")
+             |> Ash.read!()
   end
 end

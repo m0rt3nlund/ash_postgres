@@ -4,10 +4,11 @@ defmodule Mix.Tasks.AshPostgres.Migrate do
   import AshPostgres.Mix.Helpers,
     only: [migrations_path: 2, tenant_migrations_path: 2, tenants: 2]
 
-  @shortdoc "Runs the repository migrations for all repositories in the provided (or congigured) domains"
+  @shortdoc "Runs the repository migrations for all repositories in the provided (or configured) domains"
 
   @aliases [
-    n: :step
+    n: :step,
+    r: :repo
   ]
 
   @switches [
@@ -26,7 +27,8 @@ defmodule Mix.Tasks.AshPostgres.Migrate do
     no_deps_check: :boolean,
     migrations_path: :keep,
     only_tenants: :string,
-    except_tenants: :string
+    except_tenants: :string,
+    repo: :string
   ]
 
   @moduledoc """
@@ -72,6 +74,8 @@ defmodule Mix.Tasks.AshPostgres.Migrate do
 
     * `--all` - run all pending migrations
 
+    * `--repo`, `-r` - the repo to migrate
+
     * `--step`, `-n` - run n number of pending migrations
 
     * `--to` - run all migrations up to and including version
@@ -91,7 +95,7 @@ defmodule Mix.Tasks.AshPostgres.Migrate do
 
     * `--no-compile` - does not compile applications before migrating
 
-    * `--no-deps-check` - does not check depedendencies before migrating
+    * `--no-deps-check` - does not check dependencies before migrating
 
     * `--migrations-path` - the path to load the migrations from, defaults to
       `"priv/repo/migrations"`. This option may be given multiple times in which case the migrations
@@ -115,6 +119,8 @@ defmodule Mix.Tasks.AshPostgres.Migrate do
       |> AshPostgres.Mix.Helpers.delete_flag("--tenants")
       |> AshPostgres.Mix.Helpers.delete_arg("--only-tenants")
       |> AshPostgres.Mix.Helpers.delete_arg("--except-tenants")
+      |> AshPostgres.Mix.Helpers.delete_arg("--repo")
+      |> AshPostgres.Mix.Helpers.delete_arg("-r")
 
     Mix.Task.reenable("ecto.migrate")
 

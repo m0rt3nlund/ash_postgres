@@ -2,15 +2,17 @@ defmodule AshPostgres.MultiTenancy do
   @moduledoc false
 
   @dialyzer {:nowarn_function, load_migration!: 1}
+  require Logger
 
-  @tenant_name_regex ~r/^[a-zA-Z0-9_-]+$/
+  # sobelow_skip ["SQL.Query"]
   def create_tenant!(tenant_name, repo) do
+    validate_tenant_name!(tenant_name)
     Ecto.Adapters.SQL.query!(repo, "CREATE SCHEMA IF NOT EXISTS \"#{tenant_name}\"", [])
 
     migrate_tenant(tenant_name, repo)
   end
 
-  def migrate_tenant(tenant_name, repo, migrations_path \\ nil) do
+  def migrate_tenant(tenant_name, repo, migrations_path \\ nil, after_file \\ nil) do
     tenant_migrations_path =
       migrations_path ||
         repo.config()[:tenant_migrations_path] || default_tenant_migration_path(repo)
@@ -24,6 +26,18 @@ defmodule AshPostgres.MultiTenancy do
     [tenant_migrations_path, "**", "*.exs"]
     |> Path.join()
     |> Path.wildcard()
+    |> Enum.sort()
+    |> then(fn files ->
+      if after_file do
+        files
+        |> Enum.drop_while(fn file ->
+          file != after_file
+        end)
+        |> Enum.drop(1)
+      else
+        files
+      end
+    end)
     |> Enum.map(&extract_migration_info/1)
     |> Enum.filter(& &1)
     |> Enum.map(&load_migration!/1)
@@ -86,8 +100,8 @@ defmodule AshPostgres.MultiTenancy do
   end
 
   defp validate_tenant_name!(tenant_name) do
-    if !Regex.match?(@tenant_name_regex, tenant_name) do
-      raise "Tenant name must match #{inspect(@tenant_name_regex)}, got: #{tenant_name}"
+    if !Regex.match?(tenant_name_regex(), tenant_name) do
+      raise "Tenant name must match #{inspect(tenant_name_regex())}, got: #{tenant_name}"
     end
   end
 
@@ -98,5 +112,9 @@ defmodule AshPostgres.MultiTenancy do
     :code.priv_dir(otp_app)
     |> Path.join(repo_name)
     |> Path.join("tenant_migrations")
+  end
+
+  defp tenant_name_regex do
+    ~r/^[a-zA-Z0-9_-]+$/
   end
 end

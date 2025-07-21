@@ -6,7 +6,7 @@ defmodule AshPostgres.MigrationGenerator.Phase do
     defstruct [
       :table,
       :schema,
-      :multitenancy,
+      :multitenancy, :repo,
       partitioning: nil,
       operations: [],
       commented?: false
@@ -15,10 +15,16 @@ defmodule AshPostgres.MigrationGenerator.Phase do
     import AshPostgres.MigrationGenerator.Operation.Helper, only: [as_atom: 1]
 
     def up(%{
+
           schema: schema,
+
           table: table,
+
           operations: operations,
+
           multitenancy: multitenancy,
+          repo: repo
+        ,
           partitioning: partitioning
         }) do
       if multitenancy.strategy == :context do
@@ -28,9 +34,17 @@ defmodule AshPostgres.MigrationGenerator.Phase do
           Enum.map_join(operations, "\n", fn operation -> operation.__struct__.up(operation) end) <>
           "\nend"
       else
+        pre_create =
+          if schema && repo.create_schemas_in_migrations?() do
+            "execute(\"CREATE SCHEMA IF NOT EXISTS #{schema}\")" <> "\n\n"
+          else
+            ""
+          end
+
         arguments = arguments([prefix(schema), options(partitioning: partitioning)])
 
-        "create table(:#{as_atom(table)}, primary_key: false#{arguments}) do\n" <>
+        pre_create <>
+          "create table(:#{as_atom(table)}, primary_key: false#{arguments}) do\n" <>
           Enum.map_join(operations, "\n", fn operation -> operation.__struct__.up(operation) end) <>
           "\nend"
       end
