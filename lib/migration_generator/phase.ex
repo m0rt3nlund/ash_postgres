@@ -6,7 +6,8 @@ defmodule AshPostgres.MigrationGenerator.Phase do
     defstruct [
       :table,
       :schema,
-      :multitenancy, :repo,
+      :multitenancy,
+      :repo,
       partitioning: nil,
       operations: [],
       commented?: false
@@ -15,16 +16,11 @@ defmodule AshPostgres.MigrationGenerator.Phase do
     import AshPostgres.MigrationGenerator.Operation.Helper, only: [as_atom: 1]
 
     def up(%{
-
           schema: schema,
-
           table: table,
-
           operations: operations,
-
           multitenancy: multitenancy,
-          repo: repo
-        ,
+          repo: repo,
           partitioning: partitioning
         }) do
       if multitenancy.strategy == :context do
