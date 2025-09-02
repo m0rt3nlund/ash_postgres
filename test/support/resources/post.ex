@@ -614,6 +614,12 @@ defmodule AshPostgres.Test.Post do
       filter(expr(fragment("? = ?", title, parent(organization.name))))
     end
 
+    has_many(:recommendations, __MODULE__) do
+      public?(true)
+      no_attributes?(true)
+      sort([calc(fragment("abs(extract epoch from ?))", parent(datetime) - datetime))])
+    end
+
     belongs_to :parent_post, __MODULE__ do
       public?(true)
     end
@@ -776,6 +782,12 @@ defmodule AshPostgres.Test.Post do
       destination_attribute_on_join_resource: :follower_id,
       sort: [Ash.Sort.expr_sort(parent(post_followers.order), :integer)]
     )
+
+    many_to_many :tags, AshPostgres.Test.Tag do
+      public?(true)
+      through(AshPostgres.Test.PostTag)
+      sort(importance: :desc)
+    end
 
     has_many(:views, AshPostgres.Test.PostView) do
       public?(true)

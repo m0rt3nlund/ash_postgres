@@ -460,8 +460,8 @@ defmodule AshPostgres.MigrationGenerator do
 
               You have migrations remaining that were generated with the --dev flag.
 
-              Run `mix ash.codegen <name>` to remove the dev migraitons and replace them
-              with production ready migrations.
+              Run `mix ash.codegen <name>` to remove the dev migrations and replace them
+              with production-ready migrations.
               """)
 
               exit({:shutdown, 1})
@@ -1989,6 +1989,17 @@ defmodule AshPostgres.MigrationGenerator do
     end)
   end
 
+  defp resource_has_meaningful_content?(snapshot) do
+    [
+      snapshot.attributes,
+      snapshot.identities,
+      snapshot.custom_indexes,
+      snapshot.custom_statements,
+      snapshot.check_constraints
+    ]
+    |> Enum.any?(&Enum.any?/1)
+  end
+
   defp do_fetch_operations(snapshot, existing_snapshot, opts, acc \\ [])
 
   defp do_fetch_operations(
@@ -2002,35 +2013,45 @@ defmodule AshPostgres.MigrationGenerator do
   end
 
   defp do_fetch_operations(snapshot, nil, opts, acc) do
-    empty_snapshot = %{
-      attributes: [],
-      identities: [],
-      schema: nil,
-      custom_indexes: [],
-      custom_statements: [],
-      check_constraints: [],
-      table: snapshot.table,
-      repo: snapshot.repo,
-      base_filter: nil,
-      empty?: true,
-      multitenancy: %{
-        attribute: nil,
-        strategy: nil,
-        global: nil
-      }
-    }
-
-    do_fetch_operations(snapshot, empty_snapshot, opts, [
-      %Operation.CreateTable{
+    if resource_has_meaningful_content?(snapshot) do
+      empty_snapshot = %{
+        attributes: [],
+        identities: [],
+        schema: nil,
+        custom_indexes: [],
+        custom_statements: [],
+        check_constraints: [],
         table: snapshot.table,
-        schema: snapshot.schema,
         repo: snapshot.repo,
-        multitenancy: snapshot.multitenancy,
-        old_multitenancy: empty_snapshot.multitenancy,
-        partitioning: snapshot.partitioning
+        base_filter: nil,
+        empty?: true,
+        multitenancy: %{
+          attribute: nil,
+          strategy: nil,
+          global: nil
+        }
       }
-      | acc
-    ])
+
+      do_fetch_operations(snapshot, empty_snapshot, opts, [
+        %Operation.CreateTable{
+          table: snapshot.table,
+          schema: snapshot.schema,
+          repo: snapshot.repo,
+          multitenancy: snapshot.multitenancy,
+          old_multitenancy: empty_snapshot.multitenancy,
+          partitioning: snapshot.partitioning
+        }
+        | acc
+      ])
+    else
+      if !opts.quiet do
+        Logger.info(
+          "Skipping migration for empty resource: #{snapshot.table} (no attributes, identities, indexes, statements, or constraints)"
+        )
+      end
+
+      acc
+    end
   end
 
   defp do_fetch_operations(snapshot, old_snapshot, opts, acc) do

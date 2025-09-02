@@ -130,7 +130,7 @@ defmodule AshPostgres.MigrationGenerator.Operation do
 
     def index_keys(keys, all_tenants?, multitenancy) do
       if multitenancy.strategy == :attribute and not all_tenants? do
-        [multitenancy.attribute | keys]
+        Enum.uniq([multitenancy.attribute | keys])
       else
         keys
       end
@@ -752,7 +752,7 @@ defmodule AshPostgres.MigrationGenerator.Operation do
       up(%{
         op
         | old_attribute: op.new_attribute,
-          new_attribute: op.old_attribute,
+          new_attribute: Map.put(op.old_attribute, :source, op.new_attribute.source),
           old_multitenancy: op.multitenancy,
           multitenancy: op.old_multitenancy
       })

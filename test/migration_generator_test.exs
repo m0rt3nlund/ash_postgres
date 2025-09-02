@@ -111,6 +111,79 @@ defmodule AshPostgres.MigrationGeneratorTest do
     end
   end
 
+  describe "empty resources" do
+    setup do
+      on_exit(fn ->
+        File.rm_rf!("test_snapshots_path")
+        File.rm_rf!("test_migration_path")
+      end)
+    end
+
+    test "empty resource does not generate migration files" do
+      defresource EmptyPost, "empty_posts" do
+        resource do
+          require_primary_key?(false)
+        end
+
+        actions do
+          defaults([:read, :create])
+        end
+      end
+
+      defdomain([EmptyPost])
+
+      AshPostgres.MigrationGenerator.generate(Domain,
+        snapshot_path: "test_snapshots_path",
+        migration_path: "test_migration_path",
+        quiet: false,
+        format: false,
+        auto_name: true
+      )
+
+      migration_files =
+        Path.wildcard("test_migration_path/**/*_migrate_resources*.exs")
+        |> Enum.reject(&String.contains?(&1, "extensions"))
+
+      assert migration_files == []
+
+      snapshot_files =
+        Path.wildcard("test_snapshots_path/**/*.json")
+        |> Enum.reject(&String.contains?(&1, "extensions"))
+
+      assert snapshot_files == []
+    end
+
+    test "resource with only primary key generates migration" do
+      defresource PostWithId, "posts_with_id" do
+        attributes do
+          uuid_primary_key(:id)
+        end
+      end
+
+      defdomain([PostWithId])
+
+      AshPostgres.MigrationGenerator.generate(Domain,
+        snapshot_path: "test_snapshots_path",
+        migration_path: "test_migration_path",
+        quiet: false,
+        format: false,
+        auto_name: true
+      )
+
+      migration_files =
+        Path.wildcard("test_migration_path/**/*_migrate_resources*.exs")
+        |> Enum.reject(&String.contains?(&1, "extensions"))
+
+      assert length(migration_files) == 1
+
+      snapshot_files =
+        Path.wildcard("test_snapshots_path/**/*.json")
+        |> Enum.reject(&String.contains?(&1, "extensions"))
+
+      assert length(snapshot_files) == 1
+    end
+  end
+
   describe "creating initial snapshots" do
     setup do
       on_exit(fn ->
@@ -802,8 +875,41 @@ defmodule AshPostgres.MigrationGeneratorTest do
                Enum.sort(Path.wildcard("test_migration_path/**/*_migrate_resources*.exs"))
                |> Enum.reject(&String.contains?(&1, "extensions"))
 
-      assert File.read!(file2) =~ ~S[rename table(:posts, prefix: "example"), :title, to: :name]
-      assert File.read!(file2) =~ ~S[modify :title, :text, null: true, default: nil]
+      contents = File.read!(file2)
+
+      [up_side, down_side] = String.split(contents, "def down", parts: 2)
+
+      up_side_parts =
+        String.split(up_side, "\n", trim: true)
+        |> Enum.map(&String.trim/1)
+
+      up_rename_index =
+        Enum.find_index(up_side_parts, fn x ->
+          x == ~S[rename table(:posts, prefix: "example"), :title, to: :name]
+        end)
+
+      up_modify_index =
+        Enum.find_index(up_side_parts, fn x ->
+          x == ~S[modify :name, :text, null: false, default: "fred"]
+        end)
+
+      assert up_rename_index < up_modify_index
+
+      down_side_parts =
+        String.split(down_side, "\n", trim: true)
+        |> Enum.map(&String.trim/1)
+
+      down_modify_index =
+        Enum.find_index(down_side_parts, fn x ->
+          x == ~S[modify :name, :text, null: true, default: nil]
+        end)
+
+      down_rename_index =
+        Enum.find_index(down_side_parts, fn x ->
+          x == ~S[rename table(:posts, prefix: "example"), :name, to: :title]
+        end)
+
+      assert down_modify_index < down_rename_index
     end
   end
 
@@ -2767,6 +2873,68 @@ defmodule AshPostgres.MigrationGeneratorTest do
 
       assert after_index_drop =~
                ~S[modify :post_id, references(:posts, column: :id, name: "comments_post_id_fkey", type: :uuid, prefix: "public")]
+    end
+  end
+
+  describe "multitenancy identity with tenant attribute" do
+    setup do
+      on_exit(fn ->
+        File.rm_rf!("test_snapshots_path")
+        File.rm_rf!("test_migration_path")
+      end)
+    end
+
+    test "identity including tenant attribute does not duplicate columns in index" do
+      defresource Channel, "channels" do
+        postgres do
+          table "channels"
+          repo(AshPostgres.TestRepo)
+        end
+
+        actions do
+          defaults([:create, :read, :update, :destroy])
+        end
+
+        multitenancy do
+          strategy(:attribute)
+          attribute(:project_id)
+        end
+
+        identities do
+          identity(:unique_type_per_project, [:project_id, :type])
+        end
+
+        attributes do
+          uuid_primary_key(:id)
+          attribute(:project_id, :uuid, allow_nil?: false, public?: true)
+          attribute(:type, :string, allow_nil?: false, public?: true)
+          attribute(:name, :string, public?: true)
+        end
+      end
+
+      defdomain([Channel])
+
+      AshPostgres.MigrationGenerator.generate(Domain,
+        snapshot_path: "test_snapshots_path",
+        migration_path: "test_migration_path",
+        quiet: true,
+        format: false,
+        auto_name: true
+      )
+
+      assert [file] =
+               Path.wildcard("test_migration_path/**/*_migrate_resources*.exs")
+               |> Enum.reject(&String.contains?(&1, "extensions"))
+
+      file_content = File.read!(file)
+
+      # The index should only have project_id and type, not project_id twice
+      assert file_content =~
+               ~S{create unique_index(:channels, [:project_id, :type], name: "channels_unique_type_per_project_index")}
+
+      # Make sure it doesn't have duplicate columns
+      refute file_content =~
+               ~S{create unique_index(:channels, [:project_id, :project_id, :type]}
     end
   end
 

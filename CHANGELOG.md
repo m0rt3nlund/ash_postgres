@@ -5,6 +5,66 @@ See [Conventional Commits](https://www.conventionalcommits.org) for commit guide
 
 <!-- changelog -->
 
+## [v2.6.17](https://github.com/ash-project/ash_postgres/compare/v2.6.16...v2.6.17) (2025-08-31)
+
+
+
+
+### Bug Fixes:
+
+* resolve a typo in pending dev migration error message (#608) by Sheharyar Naseer
+
+## [v2.6.16](https://github.com/ash-project/ash_postgres/compare/v2.6.15...v2.6.16) (2025-08-21)
+
+
+
+
+### Improvements:
+
+* Unrelated aggregates (#606) by Zach Daniel
+
+## [v2.6.15](https://github.com/ash-project/ash_postgres/compare/v2.6.14...v2.6.15) (2025-08-07)
+
+
+
+
+### Bug Fixes:
+
+* Use new attribute source in down migration (#604) by Anatolij Werle
+
+* always set disable_async, and remove log level config by Zach Daniel
+
+## [v2.6.14](https://github.com/ash-project/ash_postgres/compare/v2.6.13...v2.6.14) (2025-07-29)
+
+
+
+
+### Bug Fixes:
+
+* deduplicate identity keys by Zach Daniel
+
+## [v2.6.13](https://github.com/ash-project/ash_postgres/compare/v2.6.12...v2.6.13) (2025-07-27)
+
+
+
+
+### Bug Fixes:
+
+* ensure tenant prefix is set only for resources with context multitenancy (#600) by Emad Shaaban
+
+## [v2.6.12](https://github.com/ash-project/ash_postgres/compare/v2.6.11...v2.6.12) (2025-07-25)
+
+
+
+
+### Bug Fixes:
+
+* ensure tenant is set on query for updates by Zach Daniel
+
+### Improvements:
+
+* do not create snapshots for resources that have no attributes  #571 (#599) by horberlan
+
 ## [v2.6.11](https://github.com/ash-project/ash_postgres/compare/v2.6.10...v2.6.11) (2025-07-17)
 
 
